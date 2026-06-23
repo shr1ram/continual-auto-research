@@ -9,10 +9,10 @@ description = "Programmatic hill-climbing optimiser for experiment candidates, w
 requires-python = ">=3.10"
 dependencies = [
     "loguru>=0.7",
-    # Shared GPU infra — pinned so the two consumer repos never drift. Bump the
-    # tag deliberately in both. Until the package repo is pushed, install it
-    # editable locally:  pip install -e ../ucl-gpu-infra
-    "ucl-gpu-infra",
+    # Shared GPU infra — both consumer repos depend on the same source so they
+    # never drift. Installs from GitHub; for local dev, override with an editable
+    # install:  pip install -e ../ucl-gpu-infra
+    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.1.0",
 ]
 
 [project.optional-dependencies]
