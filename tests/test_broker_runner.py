@@ -170,6 +170,22 @@ def test_stale_result_json_cleared_before_run(fake_infra, tmp_path):
     assert score is None, "no fresh score written and no sentinel → None (not the stale 999)"
 
 
+def test_run_command_callable_per_candidate(fake_infra, tmp_path):
+    # run_command may be a callable so each candidate bakes its own hyperparams in.
+    seen = {}
+    orig = fake_infra.s6.submit
+    def spy(receipt, scripts, config_path, kind="smoke", env=None):
+        seen["cmd"] = receipt.smoke_cmd
+        return orig(receipt, scripts, config_path, kind, env)
+    fake_infra.s6.submit = spy
+
+    r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
+                     run_command=lambda proposal: f"LR={proposal} python run.py",
+                     poll_interval_s=0.0, timeout_s=5.0)
+    r.run("0.05", 1)
+    assert seen["cmd"] == "LR=0.05 python run.py", "callable run_command receives the proposal"
+
+
 def test_lease_released_even_if_query_raises(fake_infra, tmp_path):
     def boom(run_id, scripts, env=None):
         raise RuntimeError("query exploded")

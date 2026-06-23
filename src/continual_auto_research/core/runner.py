@@ -55,17 +55,23 @@ class BrokerRunner:
 
     ``workspace_dir`` is where the proposer has written the candidate's code and
     where the run leaves ``result.json``. ``run_command`` is how to execute the
-    candidate (the proposer should also print ``SCORE=<n>`` as its final line).
-    ``project_id`` is the broker lease holder + the ``omc/<id>/<iter>`` workdir
-    marker the poller matches on.
+    candidate (the proposer should also print ``SCORE=<n>`` as its final line);
+    it may be a fixed string, OR a callable ``(proposal) -> command`` so each
+    candidate's hyperparameters can be baked into its own command. ``project_id``
+    is the broker lease holder + the ``omc/<id>/<iter>`` workdir marker the poller
+    matches on.
     """
 
     project_id: str
     workspace_dir: str
-    run_command: str
+    run_command: object          # str | Callable[[str], str]
     config_path: str = ""
     poll_interval_s: float = 15.0
     timeout_s: float = 3600.0
+
+    def _command_for(self, proposal: str) -> str:
+        rc = self.run_command
+        return rc(proposal) if callable(rc) else rc
 
     def run(self, proposal: str, iteration: int) -> Tuple[Optional[float], str]:
         # Imported here so the library imports without the infra package present
@@ -94,7 +100,7 @@ class BrokerRunner:
         try:
             scripts = stage6_infra.find_infra_scripts()
             receipt = stage6_infra.Receipt(
-                smoke_cmd=self.run_command, code_dir=self.workspace_dir, remote_dest=remote_dest,
+                smoke_cmd=self._command_for(proposal), code_dir=self.workspace_dir, remote_dest=remote_dest,
             )
             res = stage6_infra.submit(receipt, scripts, self.config_path, kind="smoke", env=env)
             if not res.ok:
