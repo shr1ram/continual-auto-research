@@ -82,6 +82,18 @@ class HillClimber:
         if patience is not None:
             ctrl.config.patience = patience
 
+        # Resume: a state snapshotted after a prior run stopped on BUDGET is
+        # reactivated when this call raises the budget above the iterations
+        # already done — the budget was the only thing that stopped it. A
+        # plateau/target stop is a genuine convergence and is NOT auto-resumed
+        # (re-running it would silently spin); the caller must reset stop_reason
+        # explicitly to override that.
+        if (ctrl.state.phase in ("done", "failed")
+                and ctrl.state.stop_reason == "budget"
+                and ctrl.state.iteration < ctrl.config.max_iterations):
+            ctrl.state.phase = "propose"
+            ctrl.state.stop_reason = ""
+
         while ctrl.should_continue():
             ctrl.begin_iteration()
             it = ctrl.state.iteration

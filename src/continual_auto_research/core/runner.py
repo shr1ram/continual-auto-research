@@ -113,6 +113,13 @@ class BrokerRunner:
 
             info = stage6_infra.query_status(res.run_id, scripts, env=env) or {}
             output = info.get("log_tail", "") or ""
+            # Score precedence (see scoring.resolve_score): a result.json in the
+            # workspace wins, else the SCORE= sentinel in the run's stdout. NOTE:
+            # the workspace result.json is only visible here if ``workspace_dir``
+            # is shared with the run (the UCL NFS case). For a non-shared remote
+            # run, the result.json lands on the remote box and is NOT readable
+            # locally — there the SCORE=<n> sentinel in ``log_tail`` is the
+            # authoritative score, which is why the proposer contract REQUIRES it.
             score = scoring.resolve_score(self.workspace_dir, output)
             return score, output
         finally:
