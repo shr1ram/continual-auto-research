@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "continual-auto-research"
+version = "0.1.0"
+description = "Programmatic hill-climbing optimiser for experiment candidates, with a thin web UI"
+requires-python = ">=3.10"
+dependencies = [
+    "loguru>=0.7",
+    # Shared GPU infra — pinned so the two consumer repos never drift. Bump the
+    # tag deliberately in both. Until the package repo is pushed, install it
+    # editable locally:  pip install -e ../ucl-gpu-infra
+    "ucl-gpu-infra",
+]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn>=0.27"]
+test = ["pytest>=7"]
+
+[project.scripts]
+car-serve = "continual_auto_research.api.app:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+continual_auto_research = ["frontend/*.html", "frontend/*.js"]

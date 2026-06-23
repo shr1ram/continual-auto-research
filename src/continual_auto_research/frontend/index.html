@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>continual-auto-research</title>
+  <style>
+    :root { --green:#245A40; --gold:#C5A55A; --terra:#B85C4A; --cream:#FBF8F1; --ink:#1d241f; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; background: var(--cream); color: var(--ink); margin: 0; padding: 2rem; }
+    h1 { color: var(--green); font-size: 1.4rem; margin: 0 0 .25rem; }
+    .sub { color: #6b736c; margin: 0 0 1.5rem; font-size: .9rem; }
+    button { background: var(--green); color: #fff; border: 0; border-radius: 6px; padding: .55rem 1.1rem; font-size: .95rem; cursor: pointer; }
+    button:disabled { opacity:.5; cursor: default; }
+    .best { font-size: 2rem; font-weight: 700; color: var(--green); }
+    .row { display:flex; gap:2rem; align-items:baseline; margin: 1rem 0; }
+    .muted { color:#6b736c; font-size:.85rem; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; font-size: .9rem; }
+    th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #e7e2d6; }
+    tr.accepted td { background: rgba(36,90,64,.08); }
+    tr.failed td { color: var(--terra); }
+    .pill { display:inline-block; padding:.1rem .5rem; border-radius:999px; font-size:.75rem; }
+    .pill.acc { background: var(--green); color:#fff; }
+    .pill.rej { background: #e7e2d6; color:#555; }
+  </style>
+</head>
+<body>
+  <h1>continual-auto-research</h1>
+  <p class="sub">A thin UI over the <code>HillClimber</code> library. Everything below comes from its event stream.</p>
+
+  <div class="row">
+    <button id="start">Start climb</button>
+    <div>best: <span class="best" id="best">—</span></div>
+    <div class="muted" id="status">idle</div>
+  </div>
+
+  <table>
+    <thead><tr><th>iter</th><th>score</th><th>improved</th><th>best</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script src="/static/pipeline-controller.js"></script>
+</body>
+</html>
