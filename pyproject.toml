@@ -16,7 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-web = ["fastapi>=0.110", "uvicorn>=0.27"]
+# `websockets` is required for the /ws/run endpoint — without it uvicorn starts
+# with ws="none" and the websocket route 404s. Use uvicorn's standard extra so
+# the WS protocol support is always present.
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "websockets>=12"]
 test = ["pytest>=7"]
 
 [project.scripts]
