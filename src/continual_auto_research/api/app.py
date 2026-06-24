@@ -154,9 +154,15 @@ async def ws_run_events(ws: WebSocket, run_id: str) -> None:
         # finished/unknown run: replay from the store, then done.
         rec = store.load(run_id)
         if rec:
+            # index stored traces by iteration so each scored row gets its trace
+            traces_by_iter = {t.get("iteration"): t for t in rec.get("traces", [])}
             for c in rec.get("history", []):
+                it = c.get("iteration")
+                tr = traces_by_iter.get(it)
+                if tr:
+                    await ws.send_text(json.dumps({"type": "trace", "replayed": True, **tr}))
                 await ws.send_text(json.dumps({
-                    "type": "scored", "iteration": c.get("iteration"),
+                    "type": "scored", "iteration": it,
                     "proposal": c.get("proposal"), "score": c.get("score"),
                     "improved": c.get("accepted"), "best": (rec.get("best") or {}).get("score"),
                     "raw_result": c.get("raw_result", ""), "replayed": True,

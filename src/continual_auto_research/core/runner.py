@@ -40,13 +40,17 @@ class CallableRunner:
 
     def __init__(self, fn: Callable[[str], object]):
         self._fn = fn
+        self.last_trace: Optional[dict] = None
 
     def run(self, proposal: str, iteration: int) -> Tuple[Optional[float], str]:
         out = self._fn(proposal)
         if isinstance(out, tuple) and len(out) == 2:
             score, text = out
-            return (None if score is None else float(score)), str(text)
-        return (None if out is None else float(out)), ""
+            score, text = (None if score is None else float(score)), str(text)
+        else:
+            score, text = (None if out is None else float(out)), ""
+        self.last_trace = {"runner": "callable", "command": "(in-process callable)", "output": text}
+        return score, text
 
 
 @dataclass
@@ -81,6 +85,15 @@ class BrokerRunner:
         iter_id = f"iter_{iteration:03d}"
         remote_dest = f"omc/{self.project_id}/{iter_id}"
         holder = self.project_id
+        command = self._command_for(proposal)
+
+        def _trace(output: str, run_id: str = "") -> None:
+            # Record the run's command + FULL output (per the trace-window design)
+            # so the UI can show exactly what executed on the GPU.
+            self.last_trace = {
+                "runner": "broker", "command": command, "output": output,
+                "run_id": run_id, "workspace_dir": self.workspace_dir,
+            }
 
         # Clear any stale result.json so a run that fails to write a fresh one
         # scores as None, not as last iteration's number.
@@ -95,16 +108,18 @@ class BrokerRunner:
         lease, status = gpu_broker.claim(holder, holder="hc_run")
         if status == "unavailable":
             logger.warning("iter {} — no free GPU; scoring as failed run", iteration)
+            _trace("engine run unavailable: no free GPU")
             return None, "engine run unavailable: no free GPU"
         env = gpu_broker.env_for(lease)
         try:
             scripts = stage6_infra.find_infra_scripts()
             receipt = stage6_infra.Receipt(
-                smoke_cmd=self._command_for(proposal), code_dir=self.workspace_dir, remote_dest=remote_dest,
+                smoke_cmd=command, code_dir=self.workspace_dir, remote_dest=remote_dest,
             )
             res = stage6_infra.submit(receipt, scripts, self.config_path, kind="smoke", env=env)
             if not res.ok:
                 logger.warning("iter {} submit failed: {}", iteration, res.error)
+                _trace(f"submit failed: {res.error}")
                 return None, f"submit failed: {res.error}"
 
             poller = run_poller.RunPoller(find_marker=lambda rid: f"omc/{rid}/{iter_id}")
@@ -115,10 +130,12 @@ class BrokerRunner:
                 time.sleep(self.poll_interval_s)
             else:
                 logger.warning("iter {} timed out after {}s", iteration, self.timeout_s)
+                _trace("run timed out", res.run_id)
                 return None, "run timed out"
 
             info = stage6_infra.query_status(res.run_id, scripts, env=env) or {}
             output = info.get("log_tail", "") or ""
+            _trace(output, res.run_id)
             # Score precedence (see scoring.resolve_score): a result.json in the
             # workspace wins, else the SCORE= sentinel in the run's stdout. NOTE:
             # the workspace result.json is only visible here if ``workspace_dir``

@@ -59,6 +59,7 @@ class OpenAICompatProposer:
         # tolerates cold start. Set wake_url to the proxy's health endpoint.
         self.wake_url = wake_url
         self._client = None  # lazy: don't require openai at import time
+        self.last_trace: Optional[dict] = None  # the last call's I/O, for the trace window
 
     def _ensure_client(self):
         if self._client is None:
@@ -87,7 +88,13 @@ class OpenAICompatProposer:
             temperature=self.temperature,
             timeout=300,
         )
-        return (resp.choices[0].message.content or "").strip()
+        out = (resp.choices[0].message.content or "").strip()
+        # Record the exact LLM I/O for the trace window (read by the climber).
+        self.last_trace = {
+            "backend": "openai_compat", "model": self.model, "base_url": self.base_url,
+            "system": self.system, "prompt": context, "response": out,
+        }
+        return out
 
 
 class ClaudeCliProposer:
@@ -100,6 +107,7 @@ class ClaudeCliProposer:
         self.system = system or _DEFAULT_SYSTEM
         self.binary = binary
         self.timeout_s = timeout_s
+        self.last_trace: Optional[dict] = None  # the last call's I/O, for the trace window
 
     def __call__(self, context: str) -> str:
         cmd = [self.binary, "-p", "--output-format", "json"]
@@ -122,9 +130,14 @@ class ClaudeCliProposer:
         # raw stdout if it isn't JSON (older CLI / plain text).
         try:
             obj = json.loads(out)
-            return str(obj.get("result", obj.get("text", out))).strip()
+            response = str(obj.get("result", obj.get("text", out))).strip()
         except (json.JSONDecodeError, AttributeError):
-            return out
+            response = out
+        self.last_trace = {
+            "backend": "claude_cli", "model": self.model or "(default)",
+            "system": self.system, "prompt": context, "response": response,
+        }
+        return response
 
 
 def build_proposer(cfg: dict) -> Callable[[str], str]:

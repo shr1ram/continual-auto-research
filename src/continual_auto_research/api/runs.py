@@ -90,6 +90,7 @@ class _LiveRun:
             "history": st.history,
             "iterations": st.iteration,
             "stop_reason": st.stop_reason,
+            "traces": self.climber.traces,   # per-iteration prompt/response/command/output
         })
         if error:
             rec["error"] = error
