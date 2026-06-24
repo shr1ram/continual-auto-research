@@ -77,9 +77,11 @@ def test_stream_emits_expected_event_sequence():
     )
     events = list(hc.stream(max_iter=1))
     types = [e["type"] for e in events]
-    assert types == ["proposed", "scored", "accepted", "done"]
+    # a `trace` event is emitted between proposed and scored (the trace window).
+    assert types == ["proposed", "trace", "scored", "accepted", "done"]
     assert events[-1]["stop_reason"] == "budget"
-    assert events[1]["score"] == 1.0
+    scored = next(e for e in events if e["type"] == "scored")
+    assert scored["score"] == 1.0
 
 
 def test_bare_callable_runner_accepted():

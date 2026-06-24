@@ -74,6 +74,8 @@ class HillClimber:
             cfg.direction = direction
         self.controller = HillClimbController(config=cfg, state=state)
         self._cancelled = False
+        self.traces: list = []   # per-iteration {proposer, runner} I/O for the trace window
+        self._traces = self.traces  # internal alias used by _iterate
 
     def cancel(self) -> None:
         """Request the loop stop after the current iteration. Thread-safe (a plain
@@ -108,15 +110,29 @@ class HillClimber:
             ctrl.begin_iteration()
             it = ctrl.state.iteration
 
-            proposal = self._propose(ctrl.proposer_context())
+            context = ctrl.proposer_context()
+            proposal = self._propose(context)
+            # The proposer may expose its exact LLM I/O via .last_trace (trace
+            # window); fall back to just the context we sent if it doesn't.
+            prop_trace = getattr(self._propose, "last_trace", None) or {"prompt": context}
             cand = ctrl.on_proposed(proposal)
             yield {"type": "proposed", "iteration": it, "proposal": proposal}
 
-            raw_full = ""
             score, raw = self._runner.run(proposal, it)
-            raw_full = (raw or "")[:4000]
+            run_trace = getattr(self._runner, "last_trace", None) or {"output": (raw or "")}
+            raw_full = (raw or "")[:4000]   # bounded copy for history/scoring
             improved = ctrl.on_scored(cand, score if score is not None else float("nan"),
                                       raw_result=raw_full)
+            # The trace event carries the FULL prompt/response/command/output for
+            # the (always-on) trace window. Emitted before scored so the UI can
+            # attach it to the iteration row.
+            trace = {
+                "iteration": it,
+                "proposer": prop_trace,         # {backend, model, system, prompt, response}
+                "runner": run_trace,            # {runner, command, output (full), run_id}
+            }
+            self._traces.append(trace)
+            yield {"type": "trace", **trace}
             yield {
                 "type": "scored",
                 "iteration": it,
@@ -125,7 +141,7 @@ class HillClimber:
                 "improved": improved,
                 "best": ctrl.best_score,
                 "stale_rounds": ctrl.state.stale_rounds,
-                "raw_result": raw_full,         # measured run output (objective breakdown)
+                "raw_result": raw_full,         # measured run output (bounded)
             }
             if improved:
                 yield {"type": "accepted", "iteration": it, "best": ctrl.best_score}

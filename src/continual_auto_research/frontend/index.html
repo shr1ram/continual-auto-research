@@ -53,7 +53,13 @@
     tr.failed td { color: var(--terra); }
     tr.cand { cursor: pointer; }
     .raw { font-family: ui-monospace, monospace; font-size:.78rem; white-space:pre-wrap;
-           color:#444; background: var(--cream); padding:.5rem; border-radius:6px; }
+           color:#444; background: var(--cream); padding:.5rem; border-radius:6px;
+           max-height:280px; overflow:auto; }
+    .tsec { margin:.4rem 0; }
+    .tlabel { font-size:.7rem; font-weight:700; letter-spacing:.04em; margin-bottom:.2rem; }
+    .tlabel.sys { color:#6b736c; } .tlabel.prompt { color: var(--green); }
+    .tlabel.resp { color: var(--gold); } .tlabel.cmd { color:#555; }
+    .tlabel.out { color: var(--terra); }
     svg { display:block; }
     .pill { display:inline-block; padding:.05rem .45rem; border-radius:999px; font-size:.72rem; }
     .pill.acc { background: var(--green); color:#fff; } .pill.rej { background: var(--line); color:#555; }
@@ -120,7 +126,7 @@
       <!-- candidate table -->
       <div class="panel">
         <table>
-          <thead><tr><th>iter</th><th>score</th><th>best</th><th>result</th><th>proposal</th></tr></thead>
+          <thead><tr><th>iter</th><th>score</th><th>best</th><th>trace</th><th>proposal</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>

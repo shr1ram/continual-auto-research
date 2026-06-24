@@ -12,6 +12,7 @@
   let currentRunId = null;
   let ws = null;
   let points = []; // {iter, score, best}
+  let traces = {}; // iteration -> {proposer, runner} trace event
   let direction = "min";
 
   // ── run list ────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@
     if (ws) { ws.close(); ws = null; }
     currentRunId = id;
     points = [];
+    traces = {};
     $("rows").innerHTML = "";
     $("best").textContent = "—";
     $("status").textContent = "loading…";
@@ -70,6 +72,12 @@
         $("stop").disabled = false; $("resume").disabled = true;
         break;
       }
+      case "trace": {
+        // stash the full prompt/response/command/output keyed by iteration; the
+        // candidate row's expander renders it when trace mode is on.
+        traces[ev.iteration] = ev;
+        break;
+      }
       case "done": {
         $("status").textContent = `done — ${ev.stop_reason} (${ev.iterations} it)`;
         $("stop").disabled = true; $("resume").disabled = false;
@@ -88,14 +96,37 @@
     const tr = document.createElement("tr");
     tr.className = "cand" + (ev.improved ? " accepted" : "") + (ev.score === null ? " failed" : "");
     const pill = ev.improved ? '<span class="pill acc">best</span>' : '<span class="pill rej">·</span>';
+    tr.dataset.iter = ev.iteration;
     tr.innerHTML =
       `<td>${ev.iteration}</td><td>${fmt(ev.score)}</td><td>${fmt(ev.best)} ${pill}</td>` +
-      `<td>${ev.raw_result ? "▸" : ""}</td>` +
+      `<td>🔍</td>` +
       `<td title="${esc(ev.proposal || "")}">${esc((ev.proposal || "").slice(0, 60))}</td>`;
-    if (ev.raw_result) {
-      tr.onclick = () => toggleRaw(tr, ev.raw_result);
-    }
+    // clicking a row opens the trace (prompt/response/command/output) for that iter
+    tr.onclick = () => toggleTrace(tr, ev);
     $("rows").appendChild(tr);
+  }
+
+  // Full trace panel: the LLM prompt + response, the run command, and the full
+  // GPU output for this iteration. Falls back to just the run output if no trace
+  // was captured (e.g. an older run).
+  function toggleTrace(tr, ev) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains("rawrow")) { next.remove(); return; }
+    const t = traces[ev.iteration];
+    const p = (t && t.proposer) || {};
+    const r = (t && t.runner) || {};
+    const sect = (label, body, cls) =>
+      body ? `<div class="tsec"><div class="tlabel ${cls||''}">${label}</div><div class="raw">${esc(body)}</div></div>` : "";
+    const html =
+      sect("SYSTEM PROMPT", p.system, "sys") +
+      sect("PROMPT → LLM" + (p.model ? ` (${esc(p.model)})` : ""), p.prompt, "prompt") +
+      sect("LLM RESPONSE", p.response != null ? p.response : ev.proposal, "resp") +
+      sect("RUN COMMAND", r.command, "cmd") +
+      sect("RUN OUTPUT (full)", r.output != null ? r.output : ev.raw_result, "out");
+    const row = document.createElement("tr");
+    row.className = "rawrow";
+    row.innerHTML = `<td colspan="5">${html || '<div class="raw">(no trace captured)</div>'}</td>`;
+    tr.after(row);
   }
 
   function toggleRaw(tr, raw) {
