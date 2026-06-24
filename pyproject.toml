@@ -12,7 +12,7 @@ dependencies = [
     # Shared GPU infra — both consumer repos depend on the same source so they
     # never drift. Installs from GitHub; for local dev, override with an editable
     # install:  pip install -e ../ucl-gpu-infra
-    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.1.0",
+    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.2.0",
 ]
 
 [project.optional-dependencies]

@@ -27,6 +27,23 @@ _FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 app = FastAPI(title="continual-auto-research")
 
 
+@app.on_event("startup")
+def _load_shared_secrets() -> None:
+    """Load the shared box-local secret file (LLM key/base_url, infra key) into
+    os.environ so the api/ollama proposers and the broker work. The file lives in
+    ONE git-ignored place referenced by every consumer; an already-set env wins.
+    Best-effort — a missing file is fine (env may be set another way)."""
+    try:
+        from ucl_gpu_infra import load_secrets
+        rep = load_secrets()
+        from loguru import logger
+        logger.info("[car] shared secrets: {} set, {} pre-set, {} empty (from {})",
+                    len(rep["set"]), len(rep["skipped"]), len(rep["empty"]), rep["path"])
+    except Exception as exc:  # noqa: BLE001 — never block startup on secret loading
+        from loguru import logger
+        logger.warning("[car] load_secrets skipped: {}", exc)
+
+
 # ── pages / health ───────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)

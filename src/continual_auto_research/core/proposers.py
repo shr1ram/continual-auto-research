@@ -140,17 +140,23 @@ def build_proposer(cfg: dict) -> Callable[[str], str]:
     if kind == "claude":
         return ClaudeCliProposer(model=cfg.get("model"), system=system)
     if kind in ("ollama", "local"):
-        base_url = cfg.get("base_url") or OLLAMA_PROXY_URL
+        base_url = cfg.get("base_url") or os.environ.get("OLLAMA_PROXY_URL") or OLLAMA_PROXY_URL
+        model = cfg.get("model") or os.environ.get("OLLAMA_MODEL") or os.environ.get("DEFAULT_LLM_MODEL")
+        if not model:
+            raise ValueError("ollama proposer needs a model (set cfg.model or OLLAMA_MODEL)")
         wake = cfg.get("wake_url")
         if wake is None and "11435" in base_url:
             wake = base_url.replace("/v1", "/_proxy/health")
         return OpenAICompatProposer(
-            model=cfg["model"], base_url=base_url, api_key=cfg.get("api_key", "ollama"),
+            model=model, base_url=base_url, api_key=cfg.get("api_key", "ollama"),
             system=system, wake_url=wake,
         )
     if kind in ("api", "openai", "openrouter", "custom"):
+        model = cfg.get("model") or os.environ.get("DEFAULT_LLM_MODEL")
+        if not model:
+            raise ValueError("api proposer needs a model (set cfg.model or DEFAULT_LLM_MODEL)")
         return OpenAICompatProposer(
-            model=cfg["model"],
+            model=model,
             base_url=cfg.get("base_url") or os.environ.get("DEFAULT_API_BASE_URL", ""),
             api_key=cfg.get("api_key") or os.environ.get("CUSTOM_API_KEY")
                     or os.environ.get("OPENROUTER_API_KEY", "x"),

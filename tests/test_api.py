@@ -114,3 +114,20 @@ def test_ws_live_run_streams_events(client):
                 break
     assert types[0] == "proposed"
     assert "scored" in types and types[-1] == "done"
+
+
+def test_startup_loads_shared_secrets(tmp_path, monkeypatch):
+    # a populated shared secret file → api backend reads ready after startup.
+    sec = tmp_path / "secrets.env"
+    sec.write_text("DEFAULT_API_BASE_URL=https://proxy/v1\nCUSTOM_API_KEY=k\nDEFAULT_LLM_MODEL=m\n")
+    monkeypatch.setenv("UCL_GPU_INFRA_SECRETS", str(sec))
+    monkeypatch.setenv("CAR_RUNS_DIR", str(tmp_path / "runs"))
+    import importlib
+    from continual_auto_research.api import app as app_mod
+    importlib.reload(app_mod)
+    # context manager fires startup events (where load_secrets runs)
+    with TestClient(app_mod.app) as c:
+        st = c.get("/api/proposers").json()["status"]
+    assert st["api"]["ready"] is True
+    import os
+    assert os.environ["DEFAULT_API_BASE_URL"] == "https://proxy/v1"
