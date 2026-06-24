@@ -40,6 +40,28 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/proposers")
+def proposers() -> dict:
+    """The proposer backends the UI can offer + their live readiness, so the
+    launch form can show status lights and disable unavailable ones."""
+    from ..core.proposers import backend_status, OLLAMA_PROXY_URL
+    return {
+        "backends": [
+            {"kind": "claude", "label": "Claude (claude -p)", "needs": ["claude CLI"]},
+            {"kind": "api", "label": "API (hosted proxy)", "needs": ["DEFAULT_API_BASE_URL", "key"]},
+            {"kind": "ollama", "label": "Local (Ollama on UCL GPU)", "needs": ["ollama proxy"]},
+        ],
+        "status": backend_status(),
+        "ollama_proxy": OLLAMA_PROXY_URL,
+    }
+
+
+@app.get("/api/health/backends")
+def health_backends() -> dict:
+    from ..core.proposers import backend_status
+    return backend_status()
+
+
 # ── runs REST ────────────────────────────────────────────────────────────────
 
 @app.get("/api/runs")

@@ -20,6 +20,9 @@ dependencies = [
 # with ws="none" and the websocket route 404s. Use uvicorn's standard extra so
 # the WS protocol support is always present.
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "websockets>=12"]
+# LLM proposer backends: `openai` is the client for the api + ollama proposers
+# (both OpenAI-compatible). The claude proposer shells out to the CLI (no dep).
+llm = ["openai>=1.0", "httpx>=0.24"]
 test = ["pytest>=7"]
 
 [project.scripts]
