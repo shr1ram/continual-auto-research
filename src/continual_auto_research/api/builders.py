@@ -21,10 +21,17 @@ def _build_runner(cfg: dict) -> Runner:
     r = cfg.get("runner") or {}
     kind = r.get("kind", "demo") if isinstance(r, dict) else str(r)
     if kind == "broker":
+        # run_command may contain a `{proposal}` placeholder so the LLM's
+        # candidate (e.g. a hyperparameter value) is injected into the command —
+        # the JSON-API bridge to BrokerRunner's callable run_command. Without a
+        # placeholder it's used verbatim (a fixed command).
+        rc = r["run_command"]
+        run_command = (lambda proposal, _t=rc: _t.replace("{proposal}", str(proposal).strip())) \
+            if "{proposal}" in rc else rc
         return BrokerRunner(
             project_id=r["project_id"],
             workspace_dir=r["workspace_dir"],
-            run_command=r["run_command"],
+            run_command=run_command,
             config_path=r.get("config_path", ""),
             poll_interval_s=float(r.get("poll_interval_s", 15.0)),
             timeout_s=float(r.get("timeout_s", 3600.0)),

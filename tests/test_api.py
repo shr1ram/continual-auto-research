@@ -131,3 +131,20 @@ def test_startup_loads_shared_secrets(tmp_path, monkeypatch):
     assert st["api"]["ready"] is True
     import os
     assert os.environ["DEFAULT_API_BASE_URL"] == "https://proxy/v1"
+
+
+def test_broker_run_command_proposal_placeholder():
+    # {proposal} in run_command must be substituted with the candidate so a
+    # UI-driven broker run can inject the LLM's hyperparameter into the command.
+    from continual_auto_research.api.builders import _build_runner
+    runner = _build_runner({"runner": {
+        "kind": "broker", "project_id": "p", "workspace_dir": "/w",
+        "run_command": "LR={proposal} python3 train.py"}})
+    cmd = runner._command_for("0.008")
+    assert cmd == "LR=0.008 python3 train.py"
+
+    # no placeholder → verbatim
+    r2 = _build_runner({"runner": {
+        "kind": "broker", "project_id": "p", "workspace_dir": "/w",
+        "run_command": "python3 train.py"}})
+    assert r2._command_for("anything") == "python3 train.py"
