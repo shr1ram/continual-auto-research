@@ -1,64 +1,221 @@
-// pipeline-controller.js — the entire UI logic.
+// pipeline-controller.js — the CAR app UI.
 //
-// Deliberately tiny: open a websocket, send a run config, render each event the
-// HillClimber library emits (proposed / scored / accepted / done). The library
-// is the product; this is a thin shell. If something can't be rendered from an
-// event here, the fix belongs in the library's event stream, not in this file.
+// Thin over the API: launch runs (POST /api/runs), list them (GET /api/runs),
+// stream a selected run (WS /ws/runs/{id}), resume/stop, and render the live
+// chart + candidate table from the event stream. All data shown comes from the
+// library's events — the API just routes them.
 
 (function () {
   const $ = (id) => document.getElementById(id);
-  const startBtn = $("start");
-  const bestEl = $("best");
-  const statusEl = $("status");
-  const rows = $("rows");
+  const api = (p, opts) => fetch(p, opts).then((r) => (r.ok ? r.json() : Promise.reject(r)));
 
-  function reset() {
-    rows.innerHTML = "";
-    bestEl.textContent = "—";
-    statusEl.textContent = "running…";
+  let currentRunId = null;
+  let ws = null;
+  let points = []; // {iter, score, best}
+  let direction = "min";
+
+  // ── run list ────────────────────────────────────────────────────────────
+  async function refreshRunList() {
+    const { runs } = await api("/api/runs");
+    const el = $("runList");
+    el.innerHTML = "";
+    runs.forEach((r) => {
+      const div = document.createElement("div");
+      div.className = "run-item" + (r.id === currentRunId ? " active" : "");
+      div.innerHTML =
+        `<div class="rid">${r.id} <span class="badge ${r.status}">${r.status}</span></div>` +
+        `<div class="meta">${r.direction || ""} · best ${fmt(r.best_score)} · ${r.iterations} it</div>`;
+      div.onclick = () => selectRun(r.id);
+      el.appendChild(div);
+    });
   }
 
-  function fmt(v) {
-    return v === null || v === undefined ? "—" : Number(v).toFixed(4);
+  function fmt(v) { return v === null || v === undefined ? "—" : Number(v).toFixed(4); }
+
+  // ── select / stream a run ──────────────────────────────────────────────
+  function selectRun(id) {
+    if (ws) { ws.close(); ws = null; }
+    currentRunId = id;
+    points = [];
+    $("rows").innerHTML = "";
+    $("best").textContent = "—";
+    $("status").textContent = "loading…";
+    drawChart();
+    refreshRunList();
+    // load config (for direction) then stream
+    api(`/api/runs/${id}`).then((rec) => {
+      direction = (rec.config && rec.config.direction) || "min";
+      openStream(id);
+    });
+  }
+
+  function openStream(id) {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}`);
+    ws.onmessage = (m) => onEvent(JSON.parse(m.data));
+    ws.onclose = () => { /* stream ended */ };
   }
 
   function onEvent(ev) {
     switch (ev.type) {
       case "scored": {
-        const tr = document.createElement("tr");
-        if (ev.improved) tr.className = "accepted";
-        if (ev.score === null) tr.className = "failed";
-        const pill = ev.improved
-          ? '<span class="pill acc">improved</span>'
-          : '<span class="pill rej">no</span>';
-        tr.innerHTML =
-          `<td>${ev.iteration}</td><td>${fmt(ev.score)}</td>` +
-          `<td>${pill}</td><td>${fmt(ev.best)}</td>`;
-        rows.appendChild(tr);
-        if (ev.best !== null && ev.best !== undefined) bestEl.textContent = fmt(ev.best);
+        addRow(ev);
+        if (ev.best !== null && ev.best !== undefined) {
+          points.push({ iter: ev.iteration, score: ev.score, best: ev.best });
+          $("best").textContent = fmt(ev.best);
+          drawChart();
+        }
+        if (ev.stale_rounds !== undefined) updatePlateau(ev.stale_rounds);
+        $("status").textContent = "running";
+        $("stop").disabled = false; $("resume").disabled = true;
         break;
       }
       case "done": {
-        statusEl.textContent =
-          `done — ${ev.stop_reason} after ${ev.iterations} iters`;
-        startBtn.disabled = false;
+        $("status").textContent = `done — ${ev.stop_reason} (${ev.iterations} it)`;
+        $("stop").disabled = true; $("resume").disabled = false;
+        refreshRunList();
         break;
       }
-      // "proposed" / "accepted" carry no extra row state in this minimal UI.
+      case "error": {
+        $("status").textContent = "error: " + (ev.error || "");
+        $("stop").disabled = true; $("resume").disabled = false;
+        break;
+      }
     }
   }
 
-  function start() {
-    startBtn.disabled = true;
-    reset();
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws/run`);
-    ws.onopen = () =>
-      ws.send(JSON.stringify({ runner: "demo", direction: "max", max_iter: 20, patience: 4 }));
-    ws.onmessage = (m) => onEvent(JSON.parse(m.data));
-    ws.onerror = () => { statusEl.textContent = "connection error"; startBtn.disabled = false; };
-    ws.onclose = () => { if (startBtn.disabled) { startBtn.disabled = false; } };
+  function addRow(ev) {
+    const tr = document.createElement("tr");
+    tr.className = "cand" + (ev.improved ? " accepted" : "") + (ev.score === null ? " failed" : "");
+    const pill = ev.improved ? '<span class="pill acc">best</span>' : '<span class="pill rej">·</span>';
+    tr.innerHTML =
+      `<td>${ev.iteration}</td><td>${fmt(ev.score)}</td><td>${fmt(ev.best)} ${pill}</td>` +
+      `<td>${ev.raw_result ? "▸" : ""}</td>` +
+      `<td title="${esc(ev.proposal || "")}">${esc((ev.proposal || "").slice(0, 60))}</td>`;
+    if (ev.raw_result) {
+      tr.onclick = () => toggleRaw(tr, ev.raw_result);
+    }
+    $("rows").appendChild(tr);
   }
 
-  startBtn.addEventListener("click", start);
+  function toggleRaw(tr, raw) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains("rawrow")) { next.remove(); return; }
+    const r = document.createElement("tr");
+    r.className = "rawrow";
+    r.innerHTML = `<td colspan="5"><div class="raw">${esc(raw)}</div></td>`;
+    tr.after(r);
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  function updatePlateau(stale) {
+    const patience = parseInt($("patience").value, 10) || 4;
+    const pct = Math.min(100, (stale / patience) * 100);
+    $("plateau").style.width = pct + "%";
+  }
+
+  // ── live chart (best line + per-candidate dots), no deps ──────────────────
+  function drawChart() {
+    const svg = $("chart");
+    const W = 600, H = 180, pad = 24;
+    if (!points.length) { svg.innerHTML = ""; return; }
+    const xs = points.map((p) => p.iter);
+    const all = points.flatMap((p) => [p.score, p.best]).filter((v) => v !== null && v !== undefined);
+    const xmin = Math.min(...xs), xmax = Math.max(...xs, xmin + 1);
+    const ymin = Math.min(...all), ymax = Math.max(...all, ymin + 1e-9);
+    const sx = (x) => pad + ((x - xmin) / (xmax - xmin || 1)) * (W - 2 * pad);
+    const sy = (y) => H - pad - ((y - ymin) / (ymax - ymin || 1)) * (H - 2 * pad);
+    let svgInner = "";
+    // best line
+    const bestPts = points.filter((p) => p.best !== null && p.best !== undefined);
+    if (bestPts.length) {
+      const d = bestPts.map((p, i) => `${i ? "L" : "M"}${sx(p.iter)},${sy(p.best)}`).join(" ");
+      svgInner += `<path d="${d}" fill="none" stroke="#245A40" stroke-width="2"/>`;
+    }
+    // candidate dots
+    points.forEach((p) => {
+      if (p.score === null || p.score === undefined) return;
+      svgInner += `<circle cx="${sx(p.iter)}" cy="${sy(p.score)}" r="3" fill="#C5A55A"/>`;
+    });
+    svg.innerHTML = svgInner;
+  }
+
+  // ── launch / resume / stop ────────────────────────────────────────────────
+  function buildConfig() {
+    const cfg = {
+      direction: $("direction").value,
+      max_iter: parseInt($("maxIter").value, 10),
+      patience: parseInt($("patience").value, 10),
+    };
+    const t = $("target").value;
+    if (t !== "") cfg.target_score = parseFloat(t);
+
+    const rk = $("runner").value;
+    if (rk === "broker") {
+      cfg.runner = {
+        kind: "broker",
+        project_id: $("projectId").value,
+        workspace_dir: $("workspaceDir").value,
+        run_command: $("runCommand").value,
+      };
+    } else cfg.runner = { kind: "demo" };
+
+    const pk = $("proposer").value;
+    if (pk !== "demo") {
+      cfg.proposer = { kind: pk };
+      if ($("model").value) cfg.proposer.model = $("model").value;
+    } else cfg.proposer = { kind: "demo" };
+    return cfg;
+  }
+
+  async function launch() {
+    $("launch").disabled = true;
+    try {
+      const rec = await api("/api/runs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildConfig()),
+      });
+      await refreshRunList();
+      selectRun(rec.id);
+    } finally { $("launch").disabled = false; }
+  }
+
+  async function resume() {
+    if (!currentRunId) return;
+    await api(`/api/runs/${currentRunId}/resume`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_iter: (points.length || 0) + 10 }),
+    });
+    selectRun(currentRunId);
+  }
+
+  async function stop() {
+    if (!currentRunId) return;
+    await api(`/api/runs/${currentRunId}/stop`, { method: "POST" }).catch(() => {});
+    $("status").textContent = "cancelling…";
+  }
+
+  // ── status lights ─────────────────────────────────────────────────────────
+  async function loadLights() {
+    try {
+      const { status } = await api("/api/proposers");
+      const el = $("lights");
+      el.innerHTML = Object.entries(status).map(([k, v]) =>
+        `<span class="light"><span class="dot ${v.ready ? "on" : "off"}"></span>${k}</span>`
+      ).join("");
+    } catch (_) { /* ignore */ }
+  }
+
+  // ── wire up ───────────────────────────────────────────────────────────────
+  $("launch").addEventListener("click", launch);
+  $("resume").addEventListener("click", resume);
+  $("stop").addEventListener("click", stop);
+  $("runner").addEventListener("change", () => {
+    $("brokerFields").style.display = $("runner").value === "broker" ? "flex" : "none";
+  });
+  refreshRunList();
+  loadLights();
+  setInterval(refreshRunList, 4000); // keep the run list fresh
 })();
