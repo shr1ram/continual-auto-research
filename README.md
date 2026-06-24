@@ -60,16 +60,37 @@ The proposer must print `SCORE=<n>` as the run's final stdout line, or write
 `result.json` marked `status: "draft"` (or any non-executed status) is ignored —
 a placeholder that never ran must not be scored as real.
 
-## The web UI
+## The web app
 
-A small shell over the library — it opens a websocket, sends a run config, and
-renders each `HillClimber` event. Anything the UI shows comes from the event
-stream; if it needs data an event doesn't carry, that's a library API gap.
+A full app over the library: launch/configure runs, watch them live, and manage
+past runs. Still a thin shell — everything it shows comes from the library's event
+stream and persisted state.
 
 ```bash
-pip install -e ".[web]"
+pip install -e ".[web,llm]"
 car-serve            # → http://127.0.0.1:8000
 ```
+
+**API:**
+
+| Method | Route | |
+|--------|-------|--|
+| `GET/POST` | `/api/runs` | list / create+start a run |
+| `GET/DELETE` | `/api/runs/{id}` | fetch / delete a run |
+| `POST` | `/api/runs/{id}/resume` | resume with `{max_iter}` more budget |
+| `POST` | `/api/runs/{id}/stop` | cancel after the current iteration |
+| `WS` | `/ws/runs/{id}` | live event stream (or replay if finished) |
+| `GET` | `/api/proposers` · `/api/health/backends` | backend readiness (status lights) |
+
+**Proposer backends** (the `proposer.kind` in a run config) — mirroring
+auto-scientist's `llm` switch:
+- `claude` — the `claude -p` subscription CLI (no API key)
+- `api` — a hosted OpenAI-compatible proxy (`DEFAULT_API_BASE_URL` + key)
+- `ollama`/`local` — Ollama on a UCL GPU via the on-box wake-proxy (`:11435`)
+
+`api` and `ollama` share one OpenAI-compatible client (differ only in `base_url`);
+`claude` is a subprocess. Runs are persisted under `$CAR_RUNS_DIR`
+(default `~/.continual-auto-research/runs`).
 
 ## Layout
 
