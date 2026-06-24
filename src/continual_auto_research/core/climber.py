@@ -73,6 +73,13 @@ class HillClimber:
         if direction:
             cfg.direction = direction
         self.controller = HillClimbController(config=cfg, state=state)
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Request the loop stop after the current iteration. Thread-safe (a plain
+        flag check); the run ends with ``stop_reason="cancelled"``. Set from
+        another thread (e.g. the API's stop route) while the climb runs."""
+        self._cancelled = True
 
     # -- the event-producing core; run() and stream() are thin wrappers --------
     def _iterate(self, max_iter: Optional[int], patience: Optional[int]) -> Iterator[dict]:
@@ -95,6 +102,9 @@ class HillClimber:
             ctrl.state.stop_reason = ""
 
         while ctrl.should_continue():
+            if self._cancelled:
+                ctrl.state.stop_reason = "cancelled"
+                break
             ctrl.begin_iteration()
             it = ctrl.state.iteration
 
@@ -102,16 +112,20 @@ class HillClimber:
             cand = ctrl.on_proposed(proposal)
             yield {"type": "proposed", "iteration": it, "proposal": proposal}
 
+            raw_full = ""
             score, raw = self._runner.run(proposal, it)
+            raw_full = (raw or "")[:4000]
             improved = ctrl.on_scored(cand, score if score is not None else float("nan"),
-                                      raw_result=(raw or "")[:4000])
+                                      raw_result=raw_full)
             yield {
                 "type": "scored",
                 "iteration": it,
+                "proposal": proposal,           # echo so the UI table needs no join
                 "score": cand.score,            # None if the run failed/non-finite
                 "improved": improved,
                 "best": ctrl.best_score,
                 "stale_rounds": ctrl.state.stale_rounds,
+                "raw_result": raw_full,         # measured run output (objective breakdown)
             }
             if improved:
                 yield {"type": "accepted", "iteration": it, "best": ctrl.best_score}

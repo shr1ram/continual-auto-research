@@ -1,56 +1,33 @@
-"""Thin web layer over the HillClimber library.
+"""Web layer over the HillClimber library — a thin shell, not the product.
 
-This file is deliberately small: it constructs a :class:`HillClimber`, runs its
-:meth:`stream` in a background thread, and forwards each event to a websocket.
-Everything the UI renders comes from the library's event stream — if the UI ever
-needs data not in an event, that's a gap to close in the library, not here.
+Exposes the library as a small app: create/list/get/resume/stop/delete runs
+(REST), and a per-run websocket that forwards the climber's event stream. All
+data the UI shows comes from the library's events/state — the API just persists
+and routes them.
 
-The library is the product; this is a shell. A headless sweep needs none of this.
+The library stays usable headless; none of this is needed to optimise in-process.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..core.climber import HillClimber
-from ..core.runner import BrokerRunner, CallableRunner
+from . import store
+from .runs import manager
 
 _FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(title="continual-auto-research")
 
 
-def _build_climber(cfg: dict) -> HillClimber:
-    """Construct a HillClimber from a UI/JSON config. The proposer here is a
-    placeholder echo for the demo UI; a real deployment injects an LLM proposer.
-    Swap ``runner`` to BrokerRunner(...) to run on the UCL GPU."""
-    direction = cfg.get("direction", "min")
-
-    def demo_proposer(context: str) -> str:
-        return f"candidate based on:\n{context[:400]}"
-
-    runner_kind = cfg.get("runner", "demo")
-    if runner_kind == "broker":
-        runner = BrokerRunner(
-            project_id=cfg["project_id"],
-            workspace_dir=cfg["workspace_dir"],
-            run_command=cfg["run_command"],
-            config_path=cfg.get("config_path", ""),
-        )
-    else:
-        # Demo runner: a trivial in-process objective so the UI works with no GPU.
-        import random
-        _rng = random.Random(0)
-        runner = CallableRunner(lambda proposal: (_rng.random(), "SCORE=%.4f" % _rng.random()))
-
-    return HillClimber(propose=demo_proposer, runner=runner, direction=direction)
-
+# ── pages / health ───────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
@@ -63,41 +40,157 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/proposers")
+def proposers() -> dict:
+    """The proposer backends the UI can offer + their live readiness, so the
+    launch form can show status lights and disable unavailable ones."""
+    from ..core.proposers import backend_status, OLLAMA_PROXY_URL
+    return {
+        "backends": [
+            {"kind": "claude", "label": "Claude (claude -p)", "needs": ["claude CLI"]},
+            {"kind": "api", "label": "API (hosted proxy)", "needs": ["DEFAULT_API_BASE_URL", "key"]},
+            {"kind": "ollama", "label": "Local (Ollama on UCL GPU)", "needs": ["ollama proxy"]},
+        ],
+        "status": backend_status(),
+        "ollama_proxy": OLLAMA_PROXY_URL,
+    }
+
+
+@app.get("/api/health/backends")
+def health_backends() -> dict:
+    from ..core.proposers import backend_status
+    return backend_status()
+
+
+# ── runs REST ────────────────────────────────────────────────────────────────
+
+@app.get("/api/runs")
+def list_runs() -> dict:
+    return {"runs": store.list_runs()}
+
+
+@app.post("/api/runs")
+async def create_run(cfg: dict) -> dict:
+    """Create + start a run. Body is the full run config (direction, max_iter,
+    patience, target_score, runner{...}, proposer{...}). Returns the run record."""
+    loop = asyncio.get_running_loop()
+    rec, _ = manager.create(cfg, loop)
+    return rec
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str) -> dict:
+    rec = store.load(run_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="run not found")
+    return rec
+
+
+@app.post("/api/runs/{run_id}/resume")
+async def resume_run(run_id: str, body: dict) -> dict:
+    """Resume a stored run with ``{max_iter}`` more budget."""
+    max_iter = int(body.get("max_iter", 0))
+    if max_iter <= 0:
+        raise HTTPException(status_code=400, detail="max_iter must be > 0")
+    loop = asyncio.get_running_loop()
+    rec = manager.resume(run_id, max_iter, loop)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return rec
+
+
+@app.post("/api/runs/{run_id}/stop")
+def stop_run(run_id: str) -> dict:
+    """Request cancellation; the run ends after its current iteration."""
+    if not manager.cancel(run_id):
+        raise HTTPException(status_code=404, detail="run not live (already finished?)")
+    return {"status": "cancelling", "id": run_id}
+
+
+@app.delete("/api/runs/{run_id}")
+def delete_run(run_id: str) -> dict:
+    if not store.delete(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"status": "deleted", "id": run_id}
+
+
+# ── per-run live event stream ────────────────────────────────────────────────
+
+@app.websocket("/ws/runs/{run_id}")
+async def ws_run_events(ws: WebSocket, run_id: str) -> None:
+    """Stream a live run's events. If the run already finished, replay its stored
+    history as ``scored`` events then close — so the UI renders past runs too."""
+    await ws.accept()
+    live = manager.get_live(run_id)
+    # Treat an already-finished run as not-live: replay from the store rather than
+    # subscribing to a worker that has already emitted its _eof to nobody (which
+    # would hang). Check both the asyncio done flag AND the persisted status, since
+    # the store flips to a terminal status a beat before the done event is set.
+    if live is not None:
+        if live.done.is_set():
+            live = None
+        else:
+            rec0 = store.load(run_id) or {}
+            if rec0.get("status") in ("done", "failed"):
+                live = None
+    if live is None:
+        # finished/unknown run: replay from the store, then done.
+        rec = store.load(run_id)
+        if rec:
+            for c in rec.get("history", []):
+                await ws.send_text(json.dumps({
+                    "type": "scored", "iteration": c.get("iteration"),
+                    "proposal": c.get("proposal"), "score": c.get("score"),
+                    "improved": c.get("accepted"), "best": (rec.get("best") or {}).get("score"),
+                    "raw_result": c.get("raw_result", ""), "replayed": True,
+                }))
+            await ws.send_text(json.dumps({
+                "type": "done", "stop_reason": rec.get("stop_reason", ""),
+                "iterations": rec.get("iterations", 0), "best": rec.get("best"),
+            }))
+        await ws.close()
+        return
+
+    q = live.subscribe()
+    try:
+        while True:
+            event = await q.get()
+            if event.get("type") == "_eof":
+                break
+            await ws.send_text(json.dumps(event))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        live.unsubscribe(q)
+
+
+# ── back-compat: the original one-shot ws/run (demo) ─────────────────────────
+
 @app.websocket("/ws/run")
-async def ws_run(ws: WebSocket) -> None:
-    """Start a climb and stream its events. The client sends one JSON config
-    message; the server forwards every HillClimber event until ``done``."""
+async def ws_run_legacy(ws: WebSocket) -> None:
+    """Legacy single-run socket: client sends one config, server creates a run and
+    forwards its events. Kept so the original minimal UI still works."""
     await ws.accept()
     try:
         cfg = json.loads(await ws.receive_text())
     except Exception:
         await ws.close(code=1003)
         return
-
-    climber = _build_climber(cfg)
-    max_iter = int(cfg.get("max_iter", 20))
-    patience = int(cfg.get("patience", 4))
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def _produce() -> None:
-        # stream() is blocking (the runner may sleep on a GPU poll), so it runs in
-        # a thread; events are handed back to the event loop via the queue.
-        for event in climber.stream(max_iter=max_iter, patience=patience):
-            loop.call_soon_threadsafe(queue.put_nowait, event)
-        loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
-
-    task = loop.run_in_executor(None, _produce)
+    # subscribe BEFORE starting so the first `proposed` event isn't missed.
+    rec, live = manager.create(cfg, loop, autostart=False)
+    q = live.subscribe()
+    manager.start(rec["id"])
     try:
         while True:
-            event = await queue.get()
-            if event is None:
+            event = await q.get()
+            if event.get("type") == "_eof":
                 break
             await ws.send_text(json.dumps(event))
     except WebSocketDisconnect:
         pass
     finally:
-        await task
+        live.unsubscribe(q)
 
 
 if _FRONTEND.is_dir():
@@ -105,9 +198,7 @@ if _FRONTEND.is_dir():
 
 
 def run() -> None:
-    """Entry point: ``python -m continual_auto_research.api.app`` or the
-    ``car-serve`` console script."""
-    import os
+    """Entry point: ``car-serve`` console script / ``python -m ...api.app``."""
     import uvicorn
     uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"),
                 port=int(os.environ.get("PORT", "8000")))

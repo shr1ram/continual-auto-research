@@ -134,3 +134,37 @@ def test_empty_proposal_and_zero_iterations():
     assert result.iterations == 0
     assert result.best is None
     assert result.stop_reason == "budget"
+
+
+def test_cancel_stops_after_current_iteration():
+    # cancel() before the loop → stops immediately with stop_reason cancelled.
+    hc = HillClimber(propose=lambda c: "x",
+                     runner=CallableRunner(lambda p: (1.0, "")), direction="max")
+    hc.cancel()
+    result = hc.run(max_iter=20)
+    assert result.stop_reason == "cancelled"
+    assert result.iterations == 0
+
+
+def test_cancel_mid_stream():
+    # cancel after the first scored event; the next iteration must not start.
+    hc = HillClimber(propose=lambda c: "x",
+                     runner=CallableRunner(lambda p: (1.0, "SCORE=1")), direction="max")
+    seen = []
+    for ev in hc.stream(max_iter=20, patience=20):
+        seen.append(ev["type"])
+        if ev["type"] == "scored":
+            hc.cancel()
+    assert seen[-1] == "done"
+    # exactly one iteration ran (proposed, scored, accepted, then done)
+    assert seen.count("proposed") == 1
+
+
+def test_scored_event_carries_proposal_and_raw_result():
+    hc = HillClimber(propose=lambda c: "cand-A",
+                     runner=CallableRunner(lambda p: (3.0, "metric breakdown\nSCORE=3")),
+                     direction="max")
+    scored = [e for e in hc.stream(max_iter=1) if e["type"] == "scored"][0]
+    assert scored["proposal"] == "cand-A"
+    assert "SCORE=3" in scored["raw_result"]
+    assert scored["stale_rounds"] == 0
