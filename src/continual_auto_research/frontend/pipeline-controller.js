@@ -185,24 +185,13 @@
     const t = $("target").value;
     if (t !== "") cfg.target_score = parseFloat(t);
 
-    const rk = $("runner").value;
-    if (rk === "broker" || rk === "h100") {
-      // project_id / workspace_dir / run_command are AUTOMATED server-side; only
-      // send an override when the user actually typed one (advanced use).
-      cfg.runner = { kind: rk };
-      const pid = $("projectId").value.trim();
-      const ws = $("workspaceDir").value.trim();
-      const rc = $("runCommand").value.trim();
-      if (pid) cfg.runner.project_id = pid;
-      if (ws) cfg.runner.workspace_dir = ws;
-      if (rc) cfg.runner.run_command = rc;
-    } else cfg.runner = { kind: "demo" };
+    // Runner is always a real GPU target (broker | h100). project_id /
+    // workspace_dir / run_command are AUTOMATED server-side — nothing to send.
+    cfg.runner = { kind: $("runner").value };
 
-    const pk = $("proposer").value;
-    if (pk !== "demo") {
-      cfg.proposer = { kind: pk };
-      if ($("model").value) cfg.proposer.model = $("model").value;
-    } else cfg.proposer = { kind: "demo" };
+    // Proposer is always a real LLM backend (api | ollama | claude).
+    cfg.proposer = { kind: $("proposer").value };
+    if ($("model").value) cfg.proposer.model = $("model").value;
     return cfg;
   }
 
@@ -248,22 +237,6 @@
   $("launch").addEventListener("click", launch);
   $("resume").addEventListener("click", resume);
   $("stop").addEventListener("click", stop);
-  $("runner").addEventListener("change", () => {
-    const gpu = $("runner").value === "broker" || $("runner").value === "h100";
-    $("gpuPanel").style.display = gpu ? "block" : "none";
-    // Always collapse the advanced overrides when the runner changes, so a
-    // previously-open panel (with stale values) doesn't resurface on the next
-    // demo→broker switch.
-    $("brokerFields").style.display = "none";
-    $("advToggle").textContent = "Show advanced overrides";
-  });
-  $("advToggle").addEventListener("click", (e) => {
-    e.preventDefault();
-    const bf = $("brokerFields");
-    const open = bf.style.display !== "none";
-    bf.style.display = open ? "none" : "flex";
-    $("advToggle").textContent = open ? "Show advanced overrides" : "Hide advanced overrides";
-  });
   refreshRunList();
   loadLights();
   setInterval(refreshRunList, 4000); // keep the run list fresh

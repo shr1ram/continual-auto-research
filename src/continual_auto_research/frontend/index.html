@@ -97,36 +97,19 @@
           <div><label>Target (optional)</label><input id="target" type="number" step="any" placeholder="—"></div>
           <div><label>Runner</label>
             <select id="runner">
-              <option value="demo">demo</option>
               <option value="broker">broker (UCL GPU)</option>
               <option value="h100">H100 (direct)</option>
             </select></div>
           <div><label>Proposer</label>
             <select id="proposer">
-              <option value="demo">demo</option>
-              <option value="claude">claude -p</option>
               <option value="api">api</option>
               <option value="ollama">ollama (local)</option>
+              <option value="claude">claude -p</option>
             </select></div>
           <div><label>Model</label><input id="model" placeholder="(proposer model)"></div>
           <button id="launch">Launch run</button>
         </div>
         <div style="margin-top:.75rem" id="lights"></div>
-        <!-- GPU runner note + optional advanced overrides (shown for broker/h100) -->
-        <div id="gpuPanel" style="display:none; margin-top:.5rem">
-          <div class="sub" style="margin-bottom:.4rem">
-            project_id, workspace_dir and run_command are set automatically — the
-            run command is parsed from each proposal (which must emit a
-            <code>cd … &amp;&amp; python …</code> line and print <code>SCORE=&lt;n&gt;</code>).
-            <button type="button" id="advToggle" class="secondary"
-              style="font-size:.8rem; padding:.15rem .5rem">Show advanced overrides</button>
-          </div>
-          <div class="row" id="brokerFields" style="display:none">
-            <div><label>project_id (auto)</label><input id="projectId" placeholder="(run id)"></div>
-            <div><label>workspace_dir (auto)</label><input id="workspaceDir" size="30" placeholder="(auto-created)"></div>
-            <div><label>run_command (auto)</label><input id="runCommand" size="36" placeholder="(parsed from proposal)"></div>
-          </div>
-        </div>
       </div>
 
       <!-- current run -->
