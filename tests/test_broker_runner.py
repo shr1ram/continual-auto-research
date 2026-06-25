@@ -239,7 +239,16 @@ def test_proposal_without_command_scores_none_with_clear_reason(fake_infra, tmp_
 
 # ── H100 direct path: no broker claim/release ─────────────────────────────────
 
-def test_h100_direct_skips_broker(fake_infra, tmp_path):
+def test_h100_direct_skips_broker(fake_infra, tmp_path, monkeypatch):
+    monkeypatch.setenv("H100_INFRA_SERVER_URL", "http://h100:9000")
+    monkeypatch.setenv("H100_INFRA_SESSION_KEY", "hk")
+    submitted_env = {}
+    orig = fake_infra.s6.submit
+    def spy(receipt, scripts, config_path, kind="smoke", env=None):
+        submitted_env.update(env or {})
+        return orig(receipt, scripts, config_path, kind, env)
+    fake_infra.s6.submit = spy
+
     r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
                      run_command="cd exp && python run.py",
                      direct=True, poll_interval_s=0.0, timeout_s=5.0)
@@ -249,6 +258,23 @@ def test_h100_direct_skips_broker(fake_infra, tmp_path):
     assert fake_infra.broker.claimed == []
     assert fake_infra.broker.released == []
     assert r.last_trace["target"] == "h100"
+    # and it must submit with the H100 endpoint, not the UCL creds
+    assert submitted_env.get("INFRA_SERVER_URL") == "http://h100:9000"
+    assert submitted_env.get("INFRA_SESSION_KEY") == "hk"
+
+
+def test_h100_unconfigured_scores_none_with_clear_reason(fake_infra, tmp_path, monkeypatch):
+    monkeypatch.delenv("H100_INFRA_SERVER_URL", raising=False)
+    monkeypatch.delenv("H100_INFRA_SESSION_KEY", raising=False)
+    monkeypatch.delenv("INFRA_SERVER_URL", raising=False)
+    monkeypatch.delenv("INFRA_SESSION_KEY", raising=False)
+    r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
+                     run_command="cd exp && python run.py",
+                     direct=True, poll_interval_s=0.0, timeout_s=5.0)
+    score, out = r.run("c", 1)
+    assert score is None
+    assert "H100 infra not configured" in out
+    assert fake_infra.broker.claimed == []
 
 
 def test_broker_path_tags_target_ucl(fake_infra, tmp_path):

@@ -138,11 +138,22 @@ class BrokerRunner:
             logger.warning("could not clear stale result.json: {}", exc)
 
         # Infra target. Default: lease a GPU from the UCL broker. H100 (direct):
-        # skip the broker entirely and submit to whatever INFRA_SERVER_URL points
-        # at — the env is already set (by switch.sh/secrets), so env=None lets
-        # stage6_infra read the process environ.
+        # skip the broker entirely and submit straight to the team H100 server.
+        # The H100 endpoint lives in its OWN env vars (H100_INFRA_SERVER_URL /
+        # H100_INFRA_SESSION_KEY) so it doesn't collide with the UCL static-shim
+        # creds (INFRA_SERVER_URL/INFRA_SESSION_KEY) the broker path uses. We build
+        # the submit env from those, falling back to the plain INFRA_* if the H100-
+        # specific ones aren't set (lets a caller point INFRA_* at H100 directly).
         if self.direct:
-            env = None  # use process environ (INFRA_SERVER_URL → H100 shim)
+            import os as _os
+            h_url = _os.environ.get("H100_INFRA_SERVER_URL") or _os.environ.get("INFRA_SERVER_URL", "")
+            h_key = _os.environ.get("H100_INFRA_SESSION_KEY") or _os.environ.get("INFRA_SESSION_KEY", "")
+            if not (h_url and h_key):
+                logger.warning("iter {} — H100 infra not configured "
+                               "(set H100_INFRA_SERVER_URL/H100_INFRA_SESSION_KEY)", iteration)
+                _trace("H100 infra not configured: set H100_INFRA_SERVER_URL / H100_INFRA_SESSION_KEY")
+                return None, "H100 infra not configured"
+            env = dict(_os.environ, INFRA_SERVER_URL=h_url, INFRA_SESSION_KEY=h_key)
             lease = None
         else:
             lease, status = gpu_broker.claim(holder, holder="hc_run")
