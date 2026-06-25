@@ -141,13 +141,14 @@ class BrokerRunner:
         # skip the broker entirely and submit straight to the team H100 server.
         # The H100 endpoint lives in its OWN env vars (H100_INFRA_SERVER_URL /
         # H100_INFRA_SESSION_KEY) so it doesn't collide with the UCL static-shim
-        # creds (INFRA_SERVER_URL/INFRA_SESSION_KEY) the broker path uses. We build
-        # the submit env from those, falling back to the plain INFRA_* if the H100-
-        # specific ones aren't set (lets a caller point INFRA_* at H100 directly).
+        # creds (INFRA_SERVER_URL/INFRA_SESSION_KEY) the broker path uses. We do
+        # NOT fall back to the plain INFRA_* here: on the box those are set to the
+        # UCL shim, so a fallback would silently submit an H100 run to the UCL
+        # backend (the wrong place). Missing H100 config must fail fast instead.
         if self.direct:
             import os as _os
-            h_url = _os.environ.get("H100_INFRA_SERVER_URL") or _os.environ.get("INFRA_SERVER_URL", "")
-            h_key = _os.environ.get("H100_INFRA_SESSION_KEY") or _os.environ.get("INFRA_SESSION_KEY", "")
+            h_url = _os.environ.get("H100_INFRA_SERVER_URL", "")
+            h_key = _os.environ.get("H100_INFRA_SESSION_KEY", "")
             if not (h_url and h_key):
                 logger.warning("iter {} — H100 infra not configured "
                                "(set H100_INFRA_SERVER_URL/H100_INFRA_SESSION_KEY)", iteration)

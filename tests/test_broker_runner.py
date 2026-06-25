@@ -264,10 +264,14 @@ def test_h100_direct_skips_broker(fake_infra, tmp_path, monkeypatch):
 
 
 def test_h100_unconfigured_scores_none_with_clear_reason(fake_infra, tmp_path, monkeypatch):
+    # H100 must NOT fall back to the generic INFRA_* creds — on the box those point
+    # at the UCL shim, so a fallback would silently submit to the wrong backend.
+    # Here INFRA_* IS set (to a UCL-like value); the H100 runner must still fail
+    # fast because the H100-specific vars are absent.
     monkeypatch.delenv("H100_INFRA_SERVER_URL", raising=False)
     monkeypatch.delenv("H100_INFRA_SESSION_KEY", raising=False)
-    monkeypatch.delenv("INFRA_SERVER_URL", raising=False)
-    monkeypatch.delenv("INFRA_SESSION_KEY", raising=False)
+    monkeypatch.setenv("INFRA_SERVER_URL", "http://ucl-shim:8771")
+    monkeypatch.setenv("INFRA_SESSION_KEY", "ucl-key")
     r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
                      run_command="cd exp && python run.py",
                      direct=True, poll_interval_s=0.0, timeout_s=5.0)

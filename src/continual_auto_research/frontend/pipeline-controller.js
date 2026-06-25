@@ -251,6 +251,11 @@
   $("runner").addEventListener("change", () => {
     const gpu = $("runner").value === "broker" || $("runner").value === "h100";
     $("gpuPanel").style.display = gpu ? "block" : "none";
+    // Always collapse the advanced overrides when the runner changes, so a
+    // previously-open panel (with stale values) doesn't resurface on the next
+    // demo→broker switch.
+    $("brokerFields").style.display = "none";
+    $("advToggle").textContent = "Show advanced overrides";
   });
   $("advToggle").addEventListener("click", (e) => {
     e.preventDefault();
