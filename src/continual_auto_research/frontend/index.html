@@ -110,21 +110,6 @@
           <button id="launch">Launch run</button>
         </div>
         <div style="margin-top:.75rem" id="lights"></div>
-        <!-- GPU runner note + optional advanced overrides (shown for broker/h100) -->
-        <div id="gpuPanel" style="display:none; margin-top:.5rem">
-          <div class="sub" style="margin-bottom:.4rem">
-            project_id, workspace_dir and run_command are set automatically — the
-            run command is parsed from each proposal (which must emit a
-            <code>cd … &amp;&amp; python …</code> line and print <code>SCORE=&lt;n&gt;</code>).
-            <button type="button" id="advToggle" class="secondary"
-              style="font-size:.8rem; padding:.15rem .5rem">Show advanced overrides</button>
-          </div>
-          <div class="row" id="brokerFields" style="display:none">
-            <div><label>project_id (auto)</label><input id="projectId" placeholder="(run id)"></div>
-            <div><label>workspace_dir (auto)</label><input id="workspaceDir" size="30" placeholder="(auto-created)"></div>
-            <div><label>run_command (auto)</label><input id="runCommand" size="36" placeholder="(parsed from proposal)"></div>
-          </div>
-        </div>
       </div>
 
       <!-- current run -->

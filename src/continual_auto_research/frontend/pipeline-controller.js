@@ -186,16 +186,8 @@
     if (t !== "") cfg.target_score = parseFloat(t);
 
     // Runner is always a real GPU target (broker | h100). project_id /
-    // workspace_dir / run_command are AUTOMATED server-side; only send an
-    // override when the user actually typed one (advanced use).
-    const rk = $("runner").value;
-    cfg.runner = { kind: rk };
-    const pid = $("projectId").value.trim();
-    const ws = $("workspaceDir").value.trim();
-    const rc = $("runCommand").value.trim();
-    if (pid) cfg.runner.project_id = pid;
-    if (ws) cfg.runner.workspace_dir = ws;
-    if (rc) cfg.runner.run_command = rc;
+    // workspace_dir / run_command are AUTOMATED server-side — nothing to send.
+    cfg.runner = { kind: $("runner").value };
 
     // Proposer is always a real LLM backend (api | ollama | claude).
     cfg.proposer = { kind: $("proposer").value };
@@ -245,21 +237,6 @@
   $("launch").addEventListener("click", launch);
   $("resume").addEventListener("click", resume);
   $("stop").addEventListener("click", stop);
-  // Both runner kinds (broker | h100) are GPU, so the panel is always shown.
-  // Collapse the advanced overrides on a runner switch so a previously-open
-  // panel (with stale values) doesn't carry over to the other target.
-  $("gpuPanel").style.display = "block";
-  $("runner").addEventListener("change", () => {
-    $("brokerFields").style.display = "none";
-    $("advToggle").textContent = "Show advanced overrides";
-  });
-  $("advToggle").addEventListener("click", (e) => {
-    e.preventDefault();
-    const bf = $("brokerFields");
-    const open = bf.style.display !== "none";
-    bf.style.display = open ? "none" : "flex";
-    $("advToggle").textContent = open ? "Show advanced overrides" : "Hide advanced overrides";
-  });
   refreshRunList();
   loadLights();
   setInterval(refreshRunList, 4000); // keep the run list fresh
