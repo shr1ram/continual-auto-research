@@ -49,6 +49,15 @@ class _FakeStage6:
         def __init__(self, smoke_cmd="", code_dir="", remote_dest=""):
             self.smoke_cmd, self.code_dir, self.remote_dest = smoke_cmd, code_dir, remote_dest
 
+    def parse_receipt(self, text, project_id="", iteration="iter_001"):
+        # Minimal stand-in for the real regex parser: pull a `cd … && python …`
+        # command out of backticks, else "". Enough to exercise the
+        # parse-from-proposal path without depending on the real package.
+        import re
+        m = re.search(r"`([^`\n]*python[^`\n]*)`", text or "")
+        cmd = m.group(1).strip() if m else ""
+        return _FakeStage6.Receipt(smoke_cmd=cmd, remote_dest=f"omc/{project_id}/{iteration}")
+
     def find_infra_scripts(self):
         return {"fast_submit.sh": "/x", "fast_push_code.sh": "/y", "fast_query_exp_status.sh": "/z"}
 
@@ -194,3 +203,55 @@ def test_lease_released_even_if_query_raises(fake_infra, tmp_path):
         _runner(tmp_path).run("c", 1)
     # the finally: must still have released the lease
     assert fake_infra.broker.released == ["proj1"]
+
+
+# ── command automation: parse the run command from the proposal ───────────────
+
+def test_run_command_parsed_from_proposal_when_empty(fake_infra, tmp_path):
+    # With NO run_command configured, the runner parses one out of the proposal —
+    # this is what makes a UI-launched broker run work with zero plumbing fields.
+    seen = {}
+    orig = fake_infra.s6.submit
+    def spy(receipt, scripts, config_path, kind="smoke", env=None):
+        seen["cmd"] = receipt.smoke_cmd
+        return orig(receipt, scripts, config_path, kind, env)
+    fake_infra.s6.submit = spy
+
+    r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
+                     run_command="", poll_interval_s=0.0, timeout_s=5.0)
+    proposal = "Here's my candidate. Run it with:\n`cd exp && python train.py --lr 0.01`\nIt prints SCORE=."
+    score, _ = r.run(proposal, 1)
+    assert seen["cmd"] == "cd exp && python train.py --lr 0.01"
+    assert score == 42.0
+
+
+def test_proposal_without_command_scores_none_with_clear_reason(fake_infra, tmp_path):
+    # A proposal with no runnable command must score as a failed run with a
+    # human-readable reason — NOT the opaque "no smoke command in receipt", and
+    # WITHOUT ever claiming a GPU.
+    r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
+                     run_command="", poll_interval_s=0.0, timeout_s=5.0)
+    score, out = r.run("just prose, no command here", 1)
+    assert score is None
+    assert "no runnable command" in out
+    assert fake_infra.broker.claimed == [], "must not claim a GPU when there's nothing to run"
+
+
+# ── H100 direct path: no broker claim/release ─────────────────────────────────
+
+def test_h100_direct_skips_broker(fake_infra, tmp_path):
+    r = BrokerRunner(project_id="p", workspace_dir=str(tmp_path),
+                     run_command="cd exp && python run.py",
+                     direct=True, poll_interval_s=0.0, timeout_s=5.0)
+    score, out = r.run("c", 1)
+    assert score == 42.0
+    # direct/H100 must NOT touch the broker at all
+    assert fake_infra.broker.claimed == []
+    assert fake_infra.broker.released == []
+    assert r.last_trace["target"] == "h100"
+
+
+def test_broker_path_tags_target_ucl(fake_infra, tmp_path):
+    r = _runner(tmp_path)
+    r.run("c", 1)
+    assert r.last_trace["target"] == "ucl-broker"

@@ -60,22 +60,44 @@ class BrokerRunner:
     ``workspace_dir`` is where the proposer has written the candidate's code and
     where the run leaves ``result.json``. ``run_command`` is how to execute the
     candidate (the proposer should also print ``SCORE=<n>`` as its final line);
-    it may be a fixed string, OR a callable ``(proposal) -> command`` so each
-    candidate's hyperparameters can be baked into its own command. ``project_id``
-    is the broker lease holder + the ``omc/<id>/<iter>`` workdir marker the poller
-    matches on.
+    it may be a fixed string, a callable ``(proposal) -> command``, OR empty/None
+    — in which case the command is PARSED FROM THE PROPOSAL each iteration (the
+    proposer emits a ``cd … && python …`` run command, exactly as the fork's
+    hill-climbing mode did). ``project_id`` is the broker lease holder + the
+    ``omc/<id>/<iter>`` workdir marker the poller matches on.
+
+    ``direct`` selects the infra target: ``False`` (default) leases a GPU via the
+    broker (UCL lab); ``True`` skips the broker claim/release and submits straight
+    to whatever ``INFRA_SERVER_URL``/``INFRA_SESSION_KEY`` point at (the H100 box).
     """
 
     project_id: str
     workspace_dir: str
-    run_command: object          # str | Callable[[str], str]
+    run_command: object = ""     # str | Callable[[str], str] | "" (parse from proposal)
     config_path: str = ""
     poll_interval_s: float = 15.0
     timeout_s: float = 3600.0
+    direct: bool = False         # True → H100 direct-submit (no broker lease)
 
     def _command_for(self, proposal: str) -> str:
         rc = self.run_command
-        return rc(proposal) if callable(rc) else rc
+        if callable(rc):
+            return rc(proposal)
+        if rc:
+            # a fixed command; still honour a {proposal} placeholder for params
+            return rc.replace("{proposal}", str(proposal).strip()) if "{proposal}" in rc else rc
+        # No command configured — parse one out of the proposal itself (the
+        # proposer's `cd … && python …` line). This is what makes a UI-launched
+        # broker run work with NO manually-typed run_command (the fork contract).
+        try:
+            from ucl_gpu_infra import stage6_infra
+            receipt = stage6_infra.parse_receipt(
+                proposal or "", project_id=self.project_id,
+            )
+            return receipt.smoke_cmd or receipt.full_cmd or ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not parse run command from proposal: {}", exc)
+            return ""
 
     def run(self, proposal: str, iteration: int) -> Tuple[Optional[float], str]:
         # Imported here so the library imports without the infra package present
@@ -87,13 +109,23 @@ class BrokerRunner:
         holder = self.project_id
         command = self._command_for(proposal)
 
+        target = "h100" if self.direct else "ucl-broker"
+
         def _trace(output: str, run_id: str = "") -> None:
             # Record the run's command + FULL output (per the trace-window design)
             # so the UI can show exactly what executed on the GPU.
             self.last_trace = {
-                "runner": "broker", "command": command, "output": output,
-                "run_id": run_id, "workspace_dir": self.workspace_dir,
+                "runner": "broker", "target": target, "command": command,
+                "output": output, "run_id": run_id, "workspace_dir": self.workspace_dir,
             }
+
+        # No runnable command in the proposal (and none configured): the candidate
+        # didn't emit a `cd … && python …` line / SCORE= contract. Score as a
+        # failed run with a clear reason rather than the opaque "no smoke command".
+        if not command:
+            logger.warning("iter {} — proposal has no runnable command; scoring as failed", iteration)
+            _trace("no runnable command found in proposal (expected a `cd … && python …` line)")
+            return None, "no runnable command found in proposal"
 
         # Clear any stale result.json so a run that fails to write a fresh one
         # scores as None, not as last iteration's number.
@@ -105,12 +137,20 @@ class BrokerRunner:
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not clear stale result.json: {}", exc)
 
-        lease, status = gpu_broker.claim(holder, holder="hc_run")
-        if status == "unavailable":
-            logger.warning("iter {} — no free GPU; scoring as failed run", iteration)
-            _trace("engine run unavailable: no free GPU")
-            return None, "engine run unavailable: no free GPU"
-        env = gpu_broker.env_for(lease)
+        # Infra target. Default: lease a GPU from the UCL broker. H100 (direct):
+        # skip the broker entirely and submit to whatever INFRA_SERVER_URL points
+        # at — the env is already set (by switch.sh/secrets), so env=None lets
+        # stage6_infra read the process environ.
+        if self.direct:
+            env = None  # use process environ (INFRA_SERVER_URL → H100 shim)
+            lease = None
+        else:
+            lease, status = gpu_broker.claim(holder, holder="hc_run")
+            if status == "unavailable":
+                logger.warning("iter {} — no free GPU; scoring as failed run", iteration)
+                _trace("engine run unavailable: no free GPU")
+                return None, "engine run unavailable: no free GPU"
+            env = gpu_broker.env_for(lease)
         try:
             scripts = stage6_infra.find_infra_scripts()
             receipt = stage6_infra.Receipt(
@@ -146,4 +186,8 @@ class BrokerRunner:
             score = scoring.resolve_score(self.workspace_dir, output)
             return score, output
         finally:
-            gpu_broker.release(holder)
+            # Only release a broker lease we actually claimed. The direct/H100
+            # path never claimed one — calling release there would be a no-op at
+            # best and could disturb an unrelated lease at worst.
+            if not self.direct:
+                gpu_broker.release(holder)

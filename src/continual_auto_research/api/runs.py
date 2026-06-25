@@ -119,7 +119,7 @@ class RunManager:
         }
         store.save(rec)
 
-        climber = build_climber(cfg)
+        climber = build_climber(cfg, run_id=run_id)
         live = _LiveRun(run_id, climber, loop)
         self._live[run_id] = live
         if autostart:
@@ -149,7 +149,7 @@ class RunManager:
         cfg = dict(rec.get("config") or {})
         cfg["max_iter"] = max_iter
         state = HillClimbState.from_dict(rec.get("state") or {})
-        climber = build_climber(cfg, state=state)
+        climber = build_climber(cfg, state=state, run_id=run_id)
         live = _LiveRun(run_id, climber, loop)
         self._live[run_id] = live
         live.start(max_iter, int(cfg.get("patience", 4)))

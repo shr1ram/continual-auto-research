@@ -186,13 +186,16 @@
     if (t !== "") cfg.target_score = parseFloat(t);
 
     const rk = $("runner").value;
-    if (rk === "broker") {
-      cfg.runner = {
-        kind: "broker",
-        project_id: $("projectId").value,
-        workspace_dir: $("workspaceDir").value,
-        run_command: $("runCommand").value,
-      };
+    if (rk === "broker" || rk === "h100") {
+      // project_id / workspace_dir / run_command are AUTOMATED server-side; only
+      // send an override when the user actually typed one (advanced use).
+      cfg.runner = { kind: rk };
+      const pid = $("projectId").value.trim();
+      const ws = $("workspaceDir").value.trim();
+      const rc = $("runCommand").value.trim();
+      if (pid) cfg.runner.project_id = pid;
+      if (ws) cfg.runner.workspace_dir = ws;
+      if (rc) cfg.runner.run_command = rc;
     } else cfg.runner = { kind: "demo" };
 
     const pk = $("proposer").value;
@@ -246,7 +249,15 @@
   $("resume").addEventListener("click", resume);
   $("stop").addEventListener("click", stop);
   $("runner").addEventListener("change", () => {
-    $("brokerFields").style.display = $("runner").value === "broker" ? "flex" : "none";
+    const gpu = $("runner").value === "broker" || $("runner").value === "h100";
+    $("gpuPanel").style.display = gpu ? "block" : "none";
+  });
+  $("advToggle").addEventListener("click", (e) => {
+    e.preventDefault();
+    const bf = $("brokerFields");
+    const open = bf.style.display !== "none";
+    bf.style.display = open ? "none" : "flex";
+    $("advToggle").textContent = open ? "Show advanced overrides" : "Hide advanced overrides";
   });
   refreshRunList();
   loadLights();

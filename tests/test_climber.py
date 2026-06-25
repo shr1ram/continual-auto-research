@@ -121,3 +121,41 @@ def test_objective_threads_through_builder_and_config():
     assert hc.controller.config.objective == "maximise accuracy"
     hc2 = build_climber({"prompt": "via the prompt alias", "runner": {"kind": "demo"}})
     assert hc2.controller.config.objective == "via the prompt alias"
+
+
+def test_broker_runner_auto_plumbing_from_run_id(tmp_path, monkeypatch):
+    # A UI broker launch sends only {kind: broker} — project_id/workspace_dir must
+    # be auto-derived from the run id, and run_command left empty (parsed later).
+    monkeypatch.setenv("CAR_RUNS_DIR", str(tmp_path))
+    from continual_auto_research.api.builders import build_climber
+
+    hc = build_climber({"runner": {"kind": "broker"}}, run_id="run-000042")
+    runner = hc._runner
+    assert runner.project_id == "run-000042"           # auto from run id
+    assert runner.workspace_dir.endswith("run-000042/experiment")
+    assert runner.run_command == ""                     # empty → parsed from proposal
+    assert runner.direct is False                       # broker, not h100
+    import os
+    assert os.path.isdir(runner.workspace_dir)          # auto-created
+
+
+def test_h100_runner_kind_sets_direct(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAR_RUNS_DIR", str(tmp_path))
+    from continual_auto_research.api.builders import build_climber
+
+    hc = build_climber({"runner": {"kind": "h100"}}, run_id="run-000007")
+    assert hc._runner.direct is True
+    assert hc._runner.project_id == "run-000007"
+
+
+def test_broker_explicit_overrides_still_win(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAR_RUNS_DIR", str(tmp_path))
+    from continual_auto_research.api.builders import build_climber
+
+    hc = build_climber({"runner": {
+        "kind": "broker", "project_id": "myproj",
+        "workspace_dir": "/custom/ws", "run_command": "python go.py",
+    }}, run_id="run-000099")
+    assert hc._runner.project_id == "myproj"
+    assert hc._runner.workspace_dir == "/custom/ws"
+    assert hc._runner.run_command == "python go.py"
