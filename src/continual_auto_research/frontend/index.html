@@ -82,6 +82,13 @@
     <main>
       <!-- launch form -->
       <div class="panel">
+        <div style="margin-bottom:.75rem">
+          <label>Objective / prompt — what to optimise</label>
+          <textarea id="objective" rows="3" style="width:100%; padding:.5rem .6rem;
+            border:1px solid var(--line); border-radius:6px; font-size:.9rem;
+            font-family: inherit; resize:vertical;"
+            placeholder="e.g. Minimise the comma.ai controls cost. The run command trains a controller and prints 'total_cost: <n>'. Lower is better — propose controller hyperparameters / code changes that reduce total_cost."></textarea>
+        </div>
         <div class="row">
           <div><label>Direction</label>
             <select id="direction"><option value="min">min</option><option value="max">max</option></select></div>

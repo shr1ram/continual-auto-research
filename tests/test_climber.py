@@ -88,3 +88,36 @@ def test_bare_callable_runner_accepted():
     # convenience: a plain callable is wrapped automatically
     hc = HillClimber(propose=lambda ctx: "c", runner=lambda p: (2.0, ""), direction="max")
     assert hc.run(max_iter=1).best_score == 2.0
+
+
+def test_objective_is_in_first_proposer_context():
+    # The objective must reach the proposer on the FIRST iteration (no history yet)
+    # — that is the whole point of the launch-form prompt field. Without it the
+    # initial candidate is generated blind.
+    from continual_auto_research.core.hill_climb import HillClimbConfig
+
+    seen = []
+
+    def proposer(context: str) -> str:
+        seen.append(context)
+        return "c"
+
+    cfg = HillClimbConfig()
+    cfg.objective = "Minimise the comma.ai controls cost; lower is better."
+    hc = HillClimber(propose=proposer, runner=CallableRunner(lambda p: (1.0, "")),
+                     config=cfg, direction="min")
+    hc.run(max_iter=1)
+    assert "comma.ai controls cost" in seen[0]
+    assert "OBJECTIVE" in seen[0]
+
+
+def test_objective_threads_through_builder_and_config():
+    # The API builder lifts cfg["objective"] into the config so proposer_context
+    # carries it, and aliases (prompt/task) are accepted.
+    from continual_auto_research.api.builders import build_climber
+
+    hc = build_climber({"objective": "maximise accuracy", "direction": "max",
+                        "runner": {"kind": "demo"}})
+    assert hc.controller.config.objective == "maximise accuracy"
+    hc2 = build_climber({"prompt": "via the prompt alias", "runner": {"kind": "demo"}})
+    assert hc2.controller.config.objective == "via the prompt alias"
