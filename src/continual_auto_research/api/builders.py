@@ -7,7 +7,9 @@ hook for the broker runner.
 """
 from __future__ import annotations
 
+import os
 import random
+from pathlib import Path
 from typing import Callable, Optional
 
 from ..core.climber import HillClimber
@@ -15,26 +17,52 @@ from ..core.hill_climb import HillClimbConfig, HillClimbState
 from ..core.runner import BrokerRunner, CallableRunner, Runner
 
 
-def _build_runner(cfg: dict) -> Runner:
-    """Pick the runner. ``demo`` is an in-process objective so the UI works with
-    no GPU; ``broker`` runs real experiments on the UCL GPU via ucl-gpu-infra."""
+def _auto_workspace_dir(run_id: str) -> str:
+    """The experiment workspace for a GPU run, created automatically so the user
+    never has to type a path. Mirrors the fork's per-run ``experiment/`` dir:
+    ``<runs_dir>/<run_id>/experiment``. The proposer writes the candidate's code
+    here and the run leaves ``result.json`` here."""
+    base = Path(os.environ.get(
+        "CAR_RUNS_DIR", str(Path.home() / ".continual-auto-research" / "runs")))
+    d = base / (run_id or "run") / "experiment"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001 — best effort; submit will surface a real error
+        pass
+    return str(d)
+
+
+def _build_runner(cfg: dict, run_id: str = "") -> Runner:
+    """Pick the runner.
+
+    * ``demo`` — an in-process toy objective so the UI works with no GPU.
+    * ``broker`` — real experiments on the UCL lab GPU (leased via the broker).
+    * ``h100`` — real experiments submitted directly to the H100 box (no broker).
+
+    For ``broker``/``h100`` the three plumbing fields are AUTOMATED so a UI launch
+    needs none of them: ``project_id`` defaults to the run id, ``workspace_dir`` is
+    auto-created under the runs dir, and ``run_command`` (when empty) is parsed from
+    each proposal. Any explicitly-provided value still wins (advanced/manual use)."""
     r = cfg.get("runner") or {}
-    kind = r.get("kind", "demo") if isinstance(r, dict) else str(r)
-    if kind == "broker":
-        # run_command may contain a `{proposal}` placeholder so the LLM's
-        # candidate (e.g. a hyperparameter value) is injected into the command —
-        # the JSON-API bridge to BrokerRunner's callable run_command. Without a
-        # placeholder it's used verbatim (a fixed command).
-        rc = r["run_command"]
-        run_command = (lambda proposal, _t=rc: _t.replace("{proposal}", str(proposal).strip())) \
-            if "{proposal}" in rc else rc
+    kind = (r.get("kind", "demo") if isinstance(r, dict) else str(r)).lower()
+    if kind in ("broker", "h100"):
+        # project_id: the broker lease holder + omc/<id>/<iter> workdir marker.
+        # Default to the run id so every run is uniquely keyed without user input.
+        project_id = (r.get("project_id") or run_id or "car-run").strip()
+        # workspace_dir: auto-create one unless the caller pinned a path.
+        workspace_dir = (r.get("workspace_dir") or "").strip() or _auto_workspace_dir(run_id)
+        # run_command: empty → BrokerRunner parses it from the proposal each
+        # iteration (the fork contract). A {proposal} placeholder is honoured by
+        # BrokerRunner._command_for when a fixed command is given.
+        run_command = (r.get("run_command") or "").strip()
         return BrokerRunner(
-            project_id=r["project_id"],
-            workspace_dir=r["workspace_dir"],
+            project_id=project_id,
+            workspace_dir=workspace_dir,
             run_command=run_command,
             config_path=r.get("config_path", ""),
             poll_interval_s=float(r.get("poll_interval_s", 15.0)),
             timeout_s=float(r.get("timeout_s", 3600.0)),
+            direct=(kind == "h100"),
         )
     # demo: a deterministic-ish toy objective; seed varies per process so repeated
     # demo runs differ but a single run is reproducible.
@@ -77,8 +105,12 @@ def _build_proposer(cfg: dict, objective: str = "") -> Callable[[str], str]:
     return demo_proposer
 
 
-def build_climber(cfg: dict, state: Optional[HillClimbState] = None) -> HillClimber:
-    """Construct a HillClimber from a run config (the REST/WS body)."""
+def build_climber(cfg: dict, state: Optional[HillClimbState] = None,
+                  run_id: str = "") -> HillClimber:
+    """Construct a HillClimber from a run config (the REST/WS body).
+
+    ``run_id`` is used to auto-derive the broker/h100 runner's project_id and
+    workspace_dir so a UI launch needs no manual plumbing fields."""
     hc_cfg = HillClimbConfig()
     if cfg.get("direction"):
         hc_cfg.direction = cfg["direction"]
@@ -96,7 +128,7 @@ def build_climber(cfg: dict, state: Optional[HillClimbState] = None) -> HillClim
 
     return HillClimber(
         propose=_build_proposer(cfg, objective=objective),
-        runner=_build_runner(cfg),
+        runner=_build_runner(cfg, run_id=run_id),
         config=hc_cfg,
         state=state,
     )
