@@ -180,6 +180,8 @@
       max_iter: parseInt($("maxIter").value, 10),
       patience: parseInt($("patience").value, 10),
     };
+    const obj = $("objective").value.trim();
+    if (obj !== "") cfg.objective = obj;
     const t = $("target").value;
     if (t !== "") cfg.target_score = parseFloat(t);
 

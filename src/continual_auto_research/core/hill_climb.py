@@ -158,6 +158,12 @@ class HillClimbConfig:
     the same way as ``llm``/``infra`` do."""
 
     direction: str = field(default_factory=lambda: _normalize_direction(_env("HC_DIRECTION", DIRECTION_MAX)))
+    # What is being optimised — the task description the user types in the launch
+    # form (or HC_OBJECTIVE). Threaded into proposer_context() on EVERY iteration
+    # (and especially the first, where there is no history yet) so the proposer
+    # knows what problem it is solving. Empty = no objective given (the proposer
+    # falls back to its generic system prompt and whatever the run output reveals).
+    objective: str = field(default_factory=lambda: _env("HC_OBJECTIVE", ""))
     # Hard cap on iterations regardless of progress.
     max_iterations: int = field(default_factory=lambda: int(_env("HC_MAX_ITERATIONS", "20")))
     # Plateau: stop after this many consecutive non-improving iterations.
@@ -328,9 +334,25 @@ class HillClimbController:
         The incumbent and recent proposals are shown in FULL (not truncated) so the
         model can build on a non-trivial solution rather than a clipped fragment.
         """
+        objective = (self.config.objective or "").strip()
+        # First iteration: no history yet. Still give the proposer the objective
+        # so the INITIAL candidate is on-task rather than blind. Without this the
+        # first proposal is generated with no idea what is being optimised.
         if not self.state.history:
+            if objective:
+                return (
+                    f"OBJECTIVE: {objective}\n"
+                    f"Optimisation direction: {self.config.direction} "
+                    f"({'lower' if self.config.direction == DIRECTION_MIN else 'higher'} is better).\n"
+                    "No candidates yet. Propose an initial solution for this objective."
+                )
             return "No candidates yet. Propose an initial solution."
-        lines = [f"Optimisation direction: {self.config.direction}."]
+        # The objective heads the context on EVERY iteration — it is the standing
+        # task the recent attempts below are all trying to improve.
+        lines = []
+        if objective:
+            lines.append(f"OBJECTIVE: {objective}")
+        lines.append(f"Optimisation direction: {self.config.direction}.")
         if self.state.best:
             b = self.state.best
             lines.append(f"Best so far (iter {b['iteration']}): score={b['score']}.")

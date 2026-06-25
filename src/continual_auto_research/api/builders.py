@@ -42,11 +42,28 @@ def _build_runner(cfg: dict) -> Runner:
     return CallableRunner(lambda proposal: (rng.random(), "SCORE=%.4f" % rng.random()))
 
 
-def _build_proposer(cfg: dict) -> Callable[[str], str]:
+def _build_proposer(cfg: dict, objective: str = "") -> Callable[[str], str]:
     """Pick the proposer. Task #33 wires claude/api/ollama here; until then a
-    placeholder that echoes the context (works with the demo runner)."""
-    p = cfg.get("proposer") or {}
+    placeholder that echoes the context (works with the demo runner).
+
+    ``objective`` (the user's task description) is folded into the proposer's
+    system prompt when the proposer config doesn't already set one — so the LLM's
+    standing instruction names the task, not just the per-iteration context."""
+    p = dict(cfg.get("proposer") or {})  # copy: we may inject `system`
     kind = p.get("kind", "demo") if isinstance(p, dict) else str(p)
+    # Fold the objective into the proposer's system prompt (unless one was given
+    # explicitly). proposer_context() also carries it per-iteration; this makes
+    # it the standing instruction too.
+    if objective and not p.get("system"):
+        p["system"] = (
+            "You are an optimisation proposer in a hill-climbing loop.\n"
+            f"OBJECTIVE: {objective}\n"
+            "You are given the best candidate so far and recent attempts with their "
+            "measured scores. Propose exactly ONE new candidate that should beat the "
+            "best, on this objective. Be concrete and concise. If the task specifies a "
+            "run command or a SCORE= contract, follow it exactly. Output ONLY the "
+            "candidate — no preamble, no explanation."
+        )
     try:
         from ..core.proposers import build_proposer  # available once #33 lands
         if kind != "demo":
@@ -71,9 +88,14 @@ def build_climber(cfg: dict, state: Optional[HillClimbState] = None) -> HillClim
         hc_cfg.max_iterations = int(cfg["max_iter"])
     ts = cfg.get("target_score")
     hc_cfg.target_score = float(ts) if ts not in (None, "") else None
+    # The objective/prompt: what the run is optimising. Threaded into both the
+    # per-iteration proposer context (via the config) and the proposer's system
+    # prompt (below). Accept a couple of aliases the UI/clients might send.
+    objective = (cfg.get("objective") or cfg.get("prompt") or cfg.get("task") or "").strip()
+    hc_cfg.objective = objective
 
     return HillClimber(
-        propose=_build_proposer(cfg),
+        propose=_build_proposer(cfg, objective=objective),
         runner=_build_runner(cfg),
         config=hc_cfg,
         state=state,
