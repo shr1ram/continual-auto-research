@@ -97,16 +97,14 @@
           <div><label>Target (optional)</label><input id="target" type="number" step="any" placeholder="—"></div>
           <div><label>Runner</label>
             <select id="runner">
-              <option value="demo">demo</option>
               <option value="broker">broker (UCL GPU)</option>
               <option value="h100">H100 (direct)</option>
             </select></div>
           <div><label>Proposer</label>
             <select id="proposer">
-              <option value="demo">demo</option>
-              <option value="claude">claude -p</option>
               <option value="api">api</option>
               <option value="ollama">ollama (local)</option>
+              <option value="claude">claude -p</option>
             </select></div>
           <div><label>Model</label><input id="model" placeholder="(proposer model)"></div>
           <button id="launch">Launch run</button>
