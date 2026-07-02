@@ -12,7 +12,10 @@ dependencies = [
     # Shared GPU infra — both consumer repos depend on the same source so they
     # never drift. Installs from GitHub; for local dev, override with an editable
     # install:  pip install -e ../ucl-gpu-infra
-    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.2.0",
+    # v0.2.1: fixes the receipt parser dropping env-prefixed run commands
+    # (e.g. "cd exp && LR=0.05 python train.py"), which made BrokerRunner fall
+    # back to the default command so parameters never actually varied.
+    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.2.1",
 ]
 
 [project.optional-dependencies]
