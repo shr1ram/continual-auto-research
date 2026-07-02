@@ -15,7 +15,7 @@ dependencies = [
     # v0.2.1: fixes the receipt parser dropping env-prefixed run commands
     # (e.g. "cd exp && LR=0.05 python train.py"), which made BrokerRunner fall
     # back to the default command so parameters never actually varied.
-    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.2.1",
+    "ucl-gpu-infra @ git+https://github.com/shr1ram/ucl-gpu-infra@v0.2.2",
 ]
 
 [project.optional-dependencies]
