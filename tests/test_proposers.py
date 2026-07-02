@@ -41,19 +41,27 @@ def test_api_reads_env_base_url(monkeypatch):
 
 # ── OpenAICompatProposer (mock the openai client) ────────────────────────────
 
-class _FakeChoice:
-    def __init__(self, content):
-        self.message = types.SimpleNamespace(content=content)
+def _chunk(content):
+    # one streaming delta chunk, shaped like the openai client's
+    return types.SimpleNamespace(
+        choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=content))])
 
 
 class _FakeCompletions:
+    """Mimics the STREAMING create() the proposer uses (the gateway-504 fix in
+    proposers.py): returns an iterator of delta chunks."""
+
     def __init__(self, content):
         self._content = content
         self.calls = []
 
     def create(self, **kw):
         self.calls.append(kw)
-        return types.SimpleNamespace(choices=[_FakeChoice(self._content)])
+        # split into two chunks to prove reassembly, plus a contentless final
+        # chunk (the usage frame streams end with)
+        mid = len(self._content) // 2
+        return iter([_chunk(self._content[:mid]), _chunk(self._content[mid:]),
+                     types.SimpleNamespace(choices=[])])
 
 
 def test_openai_compat_calls_and_returns_text(monkeypatch):

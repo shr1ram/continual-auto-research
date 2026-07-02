@@ -38,9 +38,10 @@ def test_trace_falls_back_when_proposer_has_no_last_trace():
 
 def test_openai_proposer_records_last_trace(monkeypatch):
     p = P.OpenAICompatProposer(model="m", base_url="http://x", api_key="k")
+    # streaming-shaped response: an iterator of delta chunks (see proposers.py)
     fake = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(
-        create=lambda **kw: types.SimpleNamespace(
-            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="resp"))]))))
+        create=lambda **kw: iter([types.SimpleNamespace(
+            choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content="resp"))])]))))
     monkeypatch.setattr(p, "_ensure_client", lambda: fake)
     p("the prompt context")
     assert p.last_trace["prompt"] == "the prompt context"
