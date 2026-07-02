@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from typing import Callable, Optional
 
 from loguru import logger
@@ -90,6 +91,7 @@ class OpenAICompatProposer:
             {"role": "system", "content": self.system},
             {"role": "user", "content": context},
         ]
+        t0 = time.monotonic()
         stream = client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -99,14 +101,23 @@ class OpenAICompatProposer:
             stream_options={"include_usage": True},
         )
         parts = []
+        usage = None
         for chunk in stream:
+            # include_usage: the final chunk carries the usage object (and has
+            # no choices) — capture it so callers can meter tokens/cost.
+            if getattr(chunk, "usage", None) is not None:
+                usage = chunk.usage
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                 parts.append(chunk.choices[0].delta.content)
         out = ("".join(parts)).strip()
-        # Record the exact LLM I/O for the trace window (read by the climber).
+        # Record the exact LLM I/O for the trace window (read by the climber),
+        # plus token usage + latency so a harness can meter the call.
         self.last_trace = {
             "backend": "openai_compat", "model": self.model, "base_url": self.base_url,
             "system": self.system, "prompt": context, "response": out,
+            "prompt_tokens": getattr(usage, "prompt_tokens", None),
+            "completion_tokens": getattr(usage, "completion_tokens", None),
+            "latency_s": round(time.monotonic() - t0, 3),
         }
         return out
 
