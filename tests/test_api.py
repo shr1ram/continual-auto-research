@@ -62,6 +62,18 @@ def test_get_missing_run_404(client):
     assert client.get("/api/runs/run-999999").status_code == 404
 
 
+def test_create_run_bad_proposer_is_400_not_demo_fallback(client):
+    # A misconfigured proposer must reject the run with the builder's message —
+    # not silently start a demo (echo) run that burns the GPU budget.
+    r = client.post("/api/runs", json={"max_iter": 2, "patience": 5,
+                                       "proposer": {"kind": "telepathy"}})
+    assert r.status_code == 400
+    assert "telepathy" in r.json()["detail"]
+    # the aborted record is persisted as failed, not left dangling as "starting"
+    runs = client.get("/api/runs").json()["runs"]
+    assert runs and runs[0]["status"] == "failed"
+
+
 def test_delete_run(client):
     rid = client.post("/api/runs", json={"max_iter": 2, "patience": 5}).json()["id"]
     _wait_done(client, rid)

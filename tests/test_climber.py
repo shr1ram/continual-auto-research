@@ -123,6 +123,30 @@ def test_objective_threads_through_builder_and_config():
     assert hc2.controller.config.objective == "via the prompt alias"
 
 
+def test_bad_proposer_config_raises_no_demo_fallback(monkeypatch):
+    # A misconfigured proposer must FAIL LOUD at build time, not silently fall
+    # back to the demo (echo) proposer — the fallback let a broken config burn
+    # the full GPU budget on a garbage run.
+    from continual_auto_research.api.builders import build_climber
+
+    with pytest.raises(ValueError, match="unknown proposer kind"):
+        build_climber({"proposer": {"kind": "telepathy"}, "runner": {"kind": "demo"}})
+    # missing required model for the api backend also surfaces
+    monkeypatch.delenv("DEFAULT_LLM_MODEL", raising=False)
+    with pytest.raises(ValueError, match="model"):
+        build_climber({"proposer": {"kind": "api"}, "runner": {"kind": "demo"}})
+
+
+def test_demo_proposer_still_available_when_requested():
+    # kind="demo" (and the implicit default) keeps the echo proposer working.
+    from continual_auto_research.api.builders import build_climber
+
+    for cfg in ({"runner": {"kind": "demo"}},
+                {"proposer": {"kind": "demo"}, "runner": {"kind": "demo"}}):
+        hc = build_climber(cfg)
+        assert "candidate based on" in hc._propose("some context")
+
+
 def test_broker_runner_auto_plumbing_from_run_id(tmp_path, monkeypatch):
     # A UI broker launch sends only {kind: broker} — project_id/workspace_dir must
     # be auto-derived from the run id, and run_command left empty (parsed later).

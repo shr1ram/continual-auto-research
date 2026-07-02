@@ -1,9 +1,10 @@
 """Build a HillClimber from a JSON run config.
 
 Centralises runner + proposer selection so both the REST create path and the
-resume path construct runs identically. Task #33 extends ``_build_proposer`` with
-the real claude/api/ollama backends; for now it ships the demo proposer plus a
-hook for the broker runner.
+resume path construct runs identically. ``_build_proposer`` routes to the real
+claude/api/ollama backends (:mod:`core.proposers`); the demo proposer is used
+only when explicitly requested (``kind="demo"``, the default) — a misconfigured
+proposer raises rather than silently degrading to demo.
 """
 from __future__ import annotations
 
@@ -71,8 +72,12 @@ def _build_runner(cfg: dict, run_id: str = "") -> Runner:
 
 
 def _build_proposer(cfg: dict, objective: str = "") -> Callable[[str], str]:
-    """Pick the proposer. Task #33 wires claude/api/ollama here; until then a
-    placeholder that echoes the context (works with the demo runner).
+    """Pick the proposer: claude/api/ollama via :func:`core.proposers.build_proposer`,
+    or the echo placeholder when ``kind`` is ``demo`` (works with the demo runner).
+
+    A misconfigured non-demo proposer RAISES (typically ValueError) instead of
+    silently falling back to the demo proposer — a fallback would let the run
+    proceed with an echo proposer and burn the whole GPU budget on garbage.
 
     ``objective`` (the user's task description) is folded into the proposer's
     system prompt when the proposer config doesn't already set one — so the LLM's
@@ -92,12 +97,13 @@ def _build_proposer(cfg: dict, objective: str = "") -> Callable[[str], str]:
             "run command or a SCORE= contract, follow it exactly. Output ONLY the "
             "candidate — no preamble, no explanation."
         )
-    try:
-        from ..core.proposers import build_proposer  # available once #33 lands
-        if kind != "demo":
-            return build_proposer(p)
-    except Exception:  # noqa: BLE001 — proposers module not present yet / misconfig
-        pass
+    if kind != "demo":
+        # Fail loud: any build error (unknown kind, missing model/key, missing
+        # backend lib) propagates so the run never starts. Do NOT fall back to
+        # the demo proposer here — that turned every misconfiguration into a
+        # silent garbage run.
+        from ..core.proposers import build_proposer
+        return build_proposer(p)
 
     def demo_proposer(context: str) -> str:
         return f"candidate based on:\n{context[:400]}"

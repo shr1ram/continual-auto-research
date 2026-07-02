@@ -119,7 +119,12 @@ class RunManager:
         }
         store.save(rec)
 
-        climber = build_climber(cfg, run_id=run_id)
+        try:
+            climber = build_climber(cfg, run_id=run_id)
+        except Exception as exc:  # noqa: BLE001 — fail loud: a bad config must not start a run
+            rec.update({"status": "failed", "error": str(exc)})
+            store.save(rec)
+            raise
         live = _LiveRun(run_id, climber, loop)
         self._live[run_id] = live
         if autostart:

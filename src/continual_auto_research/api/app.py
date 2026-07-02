@@ -89,9 +89,15 @@ def list_runs() -> dict:
 @app.post("/api/runs")
 async def create_run(cfg: dict) -> dict:
     """Create + start a run. Body is the full run config (direction, max_iter,
-    patience, target_score, runner{...}, proposer{...}). Returns the run record."""
+    patience, target_score, runner{...}, proposer{...}). Returns the run record.
+
+    A misconfigured proposer/runner is a client error: it surfaces as a 400 with
+    the builder's message (never a silent demo-proposer fallback)."""
     loop = asyncio.get_running_loop()
-    rec, _ = manager.create(cfg, loop)
+    try:
+        rec, _ = manager.create(cfg, loop)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return rec
 
 
