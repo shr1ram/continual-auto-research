@@ -79,16 +79,30 @@ class OpenAICompatProposer:
     def __call__(self, context: str) -> str:
         self._wake()
         client = self._ensure_client()
-        resp = client.chat.completions.create(
+        # STREAM the completion. The hosted proxy sits behind a gateway
+        # (alibaba-ga) that returns 504 Gateway Time-out after ~180s on an IDLE
+        # non-streaming connection. Kimi is a reasoning model: on a long codegen
+        # call it "thinks" >180s before the first byte, so a non-streaming
+        # create() sits idle and the gateway kills it. Streaming keeps bytes
+        # flowing (first token resets the idle clock), so a call that 504'd at
+        # ~183s completes in ~40s. Mirrors the AIDE fork's streaming fix.
+        messages = [
+            {"role": "system", "content": self.system},
+            {"role": "user", "content": context},
+        ]
+        stream = client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": self.system},
-                {"role": "user", "content": context},
-            ],
+            messages=messages,
             temperature=self.temperature,
             timeout=300,
+            stream=True,
+            stream_options={"include_usage": True},
         )
-        out = (resp.choices[0].message.content or "").strip()
+        parts = []
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                parts.append(chunk.choices[0].delta.content)
+        out = ("".join(parts)).strip()
         # Record the exact LLM I/O for the trace window (read by the climber).
         self.last_trace = {
             "backend": "openai_compat", "model": self.model, "base_url": self.base_url,
