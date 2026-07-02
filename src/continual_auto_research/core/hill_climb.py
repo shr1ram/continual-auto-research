@@ -168,6 +168,13 @@ class HillClimbConfig:
     max_iterations: int = field(default_factory=lambda: int(_env("HC_MAX_ITERATIONS", "20")))
     # Plateau: stop after this many consecutive non-improving iterations.
     patience: int = field(default_factory=lambda: int(_env("HC_PATIENCE", "4")))
+    # Circuit breaker: stop after this many CONSECUTIVE failed (non-finite /
+    # unscored) iterations. Failures deliberately don't count toward patience
+    # (see on_scored), so without this a run that fails every iteration would
+    # burn the whole max_iterations budget — one GPU claim per iteration — with
+    # zero signal. A scored (finite) iteration resets the streak. 0 disables.
+    max_consecutive_failures: int = field(
+        default_factory=lambda: int(_env("HC_MAX_CONSECUTIVE_FAILURES", "4")))
     # Optional absolute target — stop early once the metric crosses it. Empty = none.
     target_score: Optional[float] = field(
         default_factory=lambda: (
@@ -212,7 +219,11 @@ class HillClimbState:
     best: Optional[dict] = None          # asdict(Candidate) of the incumbent
     history: list = field(default_factory=list)  # [asdict(Candidate), ...]
     stale_rounds: int = 0    # consecutive non-improving iterations (plateau counter)
-    stop_reason: str = ""    # "plateau" | "budget" | "target" | "" (still running)
+    # Consecutive failed (non-finite/unscored) iterations — the circuit-breaker
+    # counter. Distinct from stale_rounds: failures never plateau, they trip the
+    # breaker instead. Reset to 0 by any scored (finite) iteration.
+    consecutive_failures: int = 0
+    stop_reason: str = ""    # "plateau" | "budget" | "target" | "failing" | "" (still running)
     # Optimisation direction RESOLVED for this run ("min"/"max"/""). Set once,
     # early — from an explicit HC_DIRECTION env if a human pinned one, else
     # inferred from the proposer's declaration (see _extract_direction). Persisted
@@ -306,6 +317,21 @@ class HillClimbController:
             self.state.stale_rounds += 1
         # non-finite: leave stale_rounds unchanged (neither progress nor plateau)
 
+        # Circuit breaker: failures don't plateau (above), so a run failing EVERY
+        # iteration would otherwise loop to max_iterations — one GPU claim per
+        # iteration — with zero signal. Track the consecutive-failure streak and
+        # terminate with an explicit reason ("failing", distinct from
+        # plateau/budget/target) once it hits the threshold. Any scored (finite)
+        # iteration resets the streak.
+        if finite:
+            self.state.consecutive_failures = 0
+        else:
+            self.state.consecutive_failures += 1
+            if (self.config.max_consecutive_failures > 0
+                    and self.state.consecutive_failures >= self.config.max_consecutive_failures):
+                self.state.stop_reason = "failing"
+                self.state.phase = "failed"
+
         self.state.history.append(asdict(cand))
 
         if finite and self.config.target_reached(score):
@@ -314,8 +340,10 @@ class HillClimbController:
         return improved
 
     def finish(self) -> dict:
-        """Mark the loop done and return the winning candidate (or None)."""
-        if self.state.phase != "done":
+        """Mark the loop done and return the winning candidate (or None). A
+        terminal "failed" phase (circuit breaker / fail()) is preserved — it must
+        not be rewritten as a clean "done"."""
+        if self.state.phase not in ("done", "failed"):
             self.state.phase = "done"
         return self.state.best
 

@@ -69,6 +69,60 @@ def test_failed_run_scores_none_and_does_not_plateau():
     assert result.best_score == 5.0
 
 
+def test_all_failures_trips_circuit_breaker():
+    # Every iteration fails. Failures don't plateau (above), so without the
+    # breaker this would burn all 20 iterations; it must stop at
+    # max_consecutive_failures with its own terminal reason — distinct from
+    # plateau/budget — and a failed phase.
+    from continual_auto_research.core.hill_climb import HillClimbConfig
+
+    cfg = HillClimbConfig()
+    cfg.max_consecutive_failures = 3
+    hc = HillClimber(propose=lambda ctx: "c",
+                     runner=CallableRunner(lambda p: (None, "crashed")),
+                     config=cfg, direction="max")
+    result = hc.run(max_iter=20, patience=4)
+    assert result.stop_reason == "failing"
+    assert result.iterations == 3
+    assert result.best is None
+    assert hc.controller.state.phase == "failed"
+
+
+def test_scored_iteration_resets_failure_streak():
+    # 2 failures, a success, 2 failures, a success: the streak never reaches the
+    # threshold of 3, so the run must use its whole budget and keep the best.
+    from continual_auto_research.core.hill_climb import HillClimbConfig
+
+    seq = iter([None, None, 5.0, None, None, 6.0])
+    cfg = HillClimbConfig()
+    cfg.max_consecutive_failures = 3
+    hc = HillClimber(propose=lambda ctx: "c",
+                     runner=CallableRunner(lambda p: (next(seq), "")),
+                     config=cfg, direction="max")
+    result = hc.run(max_iter=6, patience=10)
+    assert result.stop_reason == "budget"
+    assert result.iterations == 6
+    assert result.best_score == 6.0
+    assert hc.controller.state.consecutive_failures == 0  # the final success reset it
+
+
+def test_circuit_breaker_leaves_plateau_logic_unchanged():
+    # Finite non-improving scores still plateau exactly as before, and failures
+    # still don't count toward patience — the breaker is a separate counter.
+    from continual_auto_research.core.hill_climb import HillClimbConfig
+
+    seq = iter([1.0, 0.5, None, 0.5, 0.5])
+    cfg = HillClimbConfig()
+    cfg.max_consecutive_failures = 4
+    hc = HillClimber(propose=lambda ctx: "c",
+                     runner=CallableRunner(lambda p: (next(seq), "")),
+                     config=cfg, direction="max")
+    result = hc.run(max_iter=20, patience=3)
+    assert result.stop_reason == "plateau"
+    # iter1 best + 3 stale (finite) rounds + 1 failed round that doesn't count
+    assert result.iterations == 5
+
+
 def test_stream_emits_expected_event_sequence():
     hc = HillClimber(
         propose=lambda ctx: "c",

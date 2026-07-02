@@ -65,7 +65,10 @@ class _LiveRun:
                     # persist incrementally so a crash/restart keeps progress + the
                     # list endpoint reflects live status without holding the run.
                     self._persist("running")
-                self._persist("done")
+                # A run the controller marked failed (e.g. the consecutive-failure
+                # circuit breaker) terminates the stream cleanly but is not "done".
+                st = self.climber.controller.state
+                self._persist("failed" if st.phase == "failed" else "done")
             except Exception as exc:  # noqa: BLE001 — surface as a failed run, never crash the server
                 logger.exception("run {} crashed: {}", self.run_id, exc)
                 self._persist("failed", error=str(exc))
